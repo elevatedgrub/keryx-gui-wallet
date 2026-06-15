@@ -165,6 +165,16 @@ class MainWindow(QMainWindow):
         cv.addWidget(self.stack, 1)
         self.setCentralWidget(central)
 
+        # Persistent connection indicator in the bottom-left status bar.
+        self._status_bar = QStatusBar()
+        self._status_bar.setStyleSheet(
+            f"QStatusBar {{ background-color:{TOKENS['bg']}; "
+            f"color:{TOKENS['text_dim']}; border-top:1px solid {TOKENS['border']}; }}")
+        self._conn_label = QLabel()
+        self._status_bar.addWidget(self._conn_label)
+        self.setStatusBar(self._status_bar)
+        self._set_connection_indicator(False)
+
         self._build_connection_screen()
         self._build_wallet_screen()
         self._build_dashboard_screen()
@@ -172,6 +182,24 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.conn_screen)
         self._start_cli()
         self._offer_last_node()
+
+    def _set_connection_indicator(self, connected: bool):
+        """Update the bottom-left status indicator (Connected / Disconnected)."""
+        self._connected = connected
+        if not hasattr(self, "_conn_label"):
+            return
+        if connected:
+            dot = TOKENS["green"]; txt = _t("connected")
+        else:
+            dot = TOKENS["red"]; txt = _t("disconnected")
+        self._conn_label.setText(
+            f"<span style='color:{dot};'>●</span> "
+            f"<span style='color:{TOKENS['text_dim']};'>{txt}</span>")
+
+    def _back_to_connection(self):
+        """Return to the connection screen and mark as disconnected."""
+        self._set_connection_indicator(False)
+        self.stack.setCurrentWidget(self.conn_screen)
 
     def _offer_last_node(self):
         """If a previous node address is remembered, pre-fill it and connect
@@ -284,19 +312,18 @@ class MainWindow(QMainWindow):
             self.connect_btn.setEnabled(True)
             low = (res.output or "").lower() + (res.error or "").lower()
             if res.ok and "error" not in low and "no network" not in low:
-                self._connected = True
+                self._set_connection_indicator(True)
                 # Remember this node for next launch.
                 try:
                     from keryx_wallet.core.config import set_last_node
                     set_last_node(address)
                 except Exception:
                     pass
-                self.status("Connected. Choose a wallet option.")
                 self._populate_wallet_list()
                 self.stack.setCurrentWidget(self.wallet_screen)
             else:
-                self.status(f"Connect failed: {res.error or 'unknown'}")
-                dialogs.message(self, _t("connect_failed"), "", "warn")
+                self._set_connection_indicator(False)
+                dialogs.message(self, _t("connection_failed"), "", "warn")
 
         def after_network(res: CliResult):
             if not res.ok:
@@ -366,7 +393,7 @@ class MainWindow(QMainWindow):
         v.addWidget(self.wallet_forms)
 
         back = QPushButton(_t("back_to_connection"))
-        back.clicked.connect(lambda: self.stack.setCurrentWidget(self.conn_screen))
+        back.clicked.connect(self._back_to_connection)
         v.addWidget(back)
         v.addStretch(1)
 
@@ -735,6 +762,11 @@ class MainWindow(QMainWindow):
         if not bal or bal.upper() == "N/A":
             self.balance_label.setText(f"{bal or '—'} KRX")
             return
+        # Cache the numeric balance for the send-time insufficient-funds check.
+        try:
+            self._balance_krx = float(bal.replace(",", ""))
+        except Exception:
+            self._balance_krx = None
         # Show "<bal> KRX  ≈ $<usd>" when a price is available; else just KRX.
         krx_text = f"{bal} KRX"
         usd = ""
@@ -1314,6 +1346,16 @@ class MainWindow(QMainWindow):
         if amt_val < MIN_SEND:
             dialogs._warn(self, _t("amount_too_small"), "")
             return
+        # Insufficient-funds check: amount (plus fee) must not exceed balance.
+        bal = getattr(self, "_balance_krx", None)
+        if isinstance(bal, (int, float)):
+            try:
+                fee_val = float(fee)
+            except ValueError:
+                fee_val = 0.0
+            if amt_val + fee_val > bal:
+                dialogs._warn(self, _t("insufficient_funds"), "")
+                return
 
         def show_dialog(estimate):
             dlg = SendConfirmDialog(addr, amount, fee, estimate=estimate, parent=self)

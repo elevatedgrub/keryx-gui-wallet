@@ -33,6 +33,35 @@ def _frame(dlg: QDialog, title: str):
         f"border: 1px solid {TOKENS['green_dim']}; border-radius: 8px; }}"
         f"QLabel {{ color: {TOKENS['text']}; font-family: {MONO}; font-size: 13px; }}"
     )
+    _center_on_parent(dlg)
+
+
+def _center_on_parent(dlg: QDialog):
+    """Center a frameless dialog over its parent window. Frameless dialogs are
+    not auto-centered by the window manager (especially on Wayland, where they
+    otherwise land in the top-left of the screen), so we position them by hand
+    once their size is known."""
+    parent = dlg.parent()
+
+    def _do_center():
+        try:
+            if parent is not None and hasattr(parent, "frameGeometry"):
+                pg = parent.frameGeometry()
+                dg = dlg.frameGeometry()
+                dlg.move(pg.center().x() - dg.width() // 2,
+                         pg.center().y() - dg.height() // 2)
+        except Exception:
+            pass
+
+    _orig_show = dlg.showEvent
+
+    def _show(ev):
+        _orig_show(ev)
+        # Defer until the dialog has its final size, then center.
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, _do_center)
+
+    dlg.showEvent = _show
 
 
 def _title_label(text: str, color: str) -> QLabel:

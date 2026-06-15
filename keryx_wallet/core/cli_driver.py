@@ -644,12 +644,29 @@ class KeryxCliDriver:
                              error=f"Network must be one of: {', '.join(sorted(valid))}.")
         return self.run(f"network {network}", timeout=timeout)
 
+    # wRPC/WebSocket failure signatures emitted by keryx-cli when the node is
+    # unreachable. The connect command returns to the prompt but these errors
+    # stream into the output — we must detect them to know the connect failed.
+    CONNECT_FAIL_SIGNATURES = (
+        "no route to host",
+        "connection timeout",
+        "connection refused",
+        "websocket error",
+        "io error",
+        "connection reset",
+        "failed to connect",
+        "not connected",
+    )
+
     def connect(self, address: str, timeout: int = CONNECT_TIMEOUT) -> CliResult:
         """
         Connect to a node with `connect <address>`. The address is a required
         argument (verified). Must be called after select_network.
 
-        The address is the user's own wRPC-reachable node address.
+        The address is the user's own wRPC-reachable node address. The wRPC
+        WebSocket connects asynchronously, so a node that is down still lets the
+        `connect` command return; we scan the output for failure signatures and
+        report those as a failed connection.
         """
         address = (address or "").strip()
         if not address:
@@ -658,7 +675,17 @@ class KeryxCliDriver:
         if re.search(r"\s", address):
             return CliResult("connect", "", ok=False,
                              error="Node address must not contain whitespace.")
-        return self.run(f"connect {address}", timeout=timeout)
+        res = self.run(f"connect {address}", timeout=timeout)
+        low = ((res.output or "") + " " + (res.error or "")).lower()
+        if any(sig in low for sig in self.CONNECT_FAIL_SIGNATURES):
+            return CliResult("connect", res.output, ok=False,
+                             error="Node unreachable (wRPC connection failed).")
+        # NOTE: We intentionally do NOT drain extra output here. A post-connect
+        # read left the pexpect buffer desynced — the connection banner bled into
+        # the next command (wallet open), causing intermittent open failures.
+        # The synchronous check above catches the common unreachable-node cases;
+        # the connection indicator also reflects state once a command succeeds.
+        return res
 
     def open_wallet(self, name: str, password: str,
                     timeout: int = DEFAULT_TIMEOUT) -> CliResult:

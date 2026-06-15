@@ -730,6 +730,25 @@ _T = {
         "id": "jumlah (KRX)", "ko": "금액 (KRX)", "es": "cantidad (KRX)",
         "nl": "bedrag (KRX)",
     },
+    "connected": {
+        "en": "Connected", "ru": "Подключено", "zh": "已连接",
+        "id": "Terhubung", "ko": "연결됨", "es": "Conectado", "nl": "Verbonden",
+    },
+    "disconnected": {
+        "en": "Disconnected", "ru": "Отключено", "zh": "未连接",
+        "id": "Terputus", "ko": "연결 끊김", "es": "Desconectado",
+        "nl": "Niet verbonden",
+    },
+    "connection_failed": {
+        "en": "Connection failed", "ru": "Не удалось подключиться",
+        "zh": "连接失败", "id": "Koneksi gagal", "ko": "연결 실패",
+        "es": "Conexión fallida", "nl": "Verbinding mislukt",
+    },
+    "insufficient_funds": {
+        "en": "Insufficient funds", "ru": "Недостаточно средств",
+        "zh": "余额不足", "id": "Dana tidak cukup", "ko": "잔액 부족",
+        "es": "Fondos insuficientes", "nl": "Onvoldoende saldo",
+    },
     "ph_priority_fee": {
         "en": "priority fee (KRX)", "ru": "приоритетная комиссия (KRX)",
         "zh": "优先手续费 (KRX)", "id": "biaya prioritas (KRX)",
