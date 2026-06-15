@@ -13,3 +13,4 @@ dist/
 .idea/
 .vscode/
 keryx-cli
+.keryx-wallet-history.json

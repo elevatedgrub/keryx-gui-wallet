@@ -624,7 +624,36 @@ class MainWindow(QMainWindow):
         self.send_addr.focusOutEvent = _focus_out
         self.send_amount = QLineEdit(); self.send_amount.setPlaceholderText(_t("ph_amount"))
         self.send_fee = QLineEdit(); self.send_fee.setPlaceholderText(_t("ph_priority_fee"))
-        sb.addRow(_t("to"), self.send_addr)
+        # Destination row: address field + an address-book button to its right.
+        to_row = QWidget()
+        to_h = QHBoxLayout(to_row)
+        to_h.setContentsMargins(0, 0, 0, 0)
+        to_h.setSpacing(6)
+        to_h.addWidget(self.send_addr, 1)
+        self.addrbook_btn = QPushButton()
+        self.addrbook_btn.setToolTip(_t("address_book"))
+        self.addrbook_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.addrbook_btn.setFixedWidth(40)
+        _abk = _asset_path("addressbook-green.png")
+        _abk_dark = _asset_path("addressbook-dark.png")
+        if _abk:
+            from PyQt6.QtGui import QIcon
+            from PyQt6.QtCore import QSize
+            self._abk_icon = QIcon(_abk)
+            self._abk_icon_dark = QIcon(_abk_dark) if _abk_dark else self._abk_icon
+            self.addrbook_btn.setIcon(self._abk_icon)
+            self.addrbook_btn.setIconSize(QSize(20, 20))
+            _ab = self.addrbook_btn
+            _oe, _ol = _ab.enterEvent, _ab.leaveEvent
+            def _ab_enter(ev, b=_ab):
+                b.setIcon(self._abk_icon_dark); _oe(ev)
+            def _ab_leave(ev, b=_ab):
+                b.setIcon(self._abk_icon); _ol(ev)
+            _ab.enterEvent = _ab_enter
+            _ab.leaveEvent = _ab_leave
+        self.addrbook_btn.clicked.connect(self._open_address_book)
+        to_h.addWidget(self.addrbook_btn)
+        sb.addRow(_t("to"), to_row)
         sb.addRow(_t("amount"), self.send_amount)
         sb.addRow(_t("fee"), self.send_fee)
         send_btn = QPushButton(_t("send_btn"))
@@ -1001,25 +1030,49 @@ class MainWindow(QMainWindow):
 
         from keryx_wallet.core.explorer import get_address_transactions
         from keryx_wallet.core.worker import CliRunnable
+        from keryx_wallet.core import history_cache
+
+        # 1. Show cached history instantly (from a previous run), if any.
+        cached = history_cache.get_cached(addr)
+        if cached:
+            self._render_history_explorer(cached)
+
+        known = history_cache.known_tx_ids(addr)
 
         def work():
-            return get_address_transactions(addr)
+            if known:
+                # Incremental: fetch only txs newer than what we have cached.
+                new_txs = get_address_transactions(addr, stop_at_ids=known)
+                if isinstance(new_txs, list):
+                    return ("merge", new_txs)
+                return ("none", None)
+            # First time for this address: full fetch.
+            full = get_address_transactions(addr)
+            return ("full", full)
 
         def done(result):
-            if isinstance(result, list):
-                self._render_history_explorer(result)
-            else:
-                # Explorer unreachable — show a clear message rather than CLI.
+            mode, data = result if isinstance(result, tuple) else ("none", None)
+            if mode == "full" and isinstance(data, list):
+                history_cache.set_cached(addr, data)
+                self._render_history_explorer(data)
+            elif mode == "merge" and isinstance(data, list):
+                merged = history_cache.merge_new(addr, data)
+                self._render_history_explorer(merged)
+            elif not cached:
+                # Nothing cached and fetch failed — show unreachable message.
+                self.history_view.setHtml(
+                    f"<div style='color:{TOKENS['text_dim']};'>"
+                    "Could not reach the explorer. Transactions unavailable.</div>")
+
+        def failed(_e):
+            if not cached:
                 self.history_view.setHtml(
                     f"<div style='color:{TOKENS['text_dim']};'>"
                     "Could not reach the explorer. Transactions unavailable.</div>")
 
         task = CliRunnable(work)
         task.signals.finished.connect(done)
-        task.signals.error.connect(
-            lambda e: self.history_view.setHtml(
-                f"<div style='color:{TOKENS['text_dim']};'>"
-                "Could not reach the explorer. Transactions unavailable.</div>"))
+        task.signals.error.connect(failed)
         self.pool.start(task)
 
     def _render_history_explorer(self, txs: list):
@@ -1173,6 +1226,14 @@ class MainWindow(QMainWindow):
         self._tx_page = getattr(self, "_tx_page", 0) + 1
         if getattr(self, "_explorer_txs", None) is not None:
             self._render_history_explorer(self._explorer_txs)
+
+    def _open_address_book(self):
+        from keryx_wallet.ui.address_book import AddressBookDialog
+        dlg = AddressBookDialog(self, current_address=self.send_addr.text().strip())
+        chosen = dlg.exec_and_get()
+        if chosen:
+            self.send_addr.setText(chosen)
+            self.send_addr.setCursorPosition(0)
 
     def _do_send(self):
         if not self._connected:
@@ -1395,8 +1456,16 @@ class MainWindow(QMainWindow):
     # ── shutdown ─────────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
+        # Stop periodic work first so no new tasks are queued during teardown.
         try:
             self._balance_timer.stop()
+        except Exception:
+            pass
+        # Give in-flight worker threads a brief moment to finish so they don't
+        # emit into a half-destroyed window (the _safe_emit guard catches the
+        # rest). 1.5s is enough for quick calls; long ones are abandoned.
+        try:
+            self.pool.waitForDone(1500)
         except Exception:
             pass
         try:

@@ -22,6 +22,8 @@ a = Analysis(
            ('assets/keryx-48.png', 'assets'),
            ('assets/globe-green.png', 'assets'),
            ('assets/globe-dark.png', 'assets'),
+           ('assets/addressbook-green.png', 'assets'),
+           ('assets/addressbook-dark.png', 'assets'),
            ('assets/keryx-header.png', 'assets')],
     hiddenimports=[
         # pexpect imports submodules dynamically on Linux

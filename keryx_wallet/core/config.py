@@ -50,3 +50,38 @@ def set_language(lang: str) -> None:
     data = load()
     data["language"] = (lang or "").strip()
     save(data)
+
+
+# ── Address book ─────────────────────────────────────────────────────────
+def get_address_book() -> list:
+    """Return saved addresses as a list of {"label": str, "address": str}."""
+    data = load()
+    book = data.get("address_book", [])
+    return book if isinstance(book, list) else []
+
+
+def save_address_book(entries: list) -> None:
+    data = load()
+    data["address_book"] = entries
+    save(data)
+
+
+def add_address(label: str, address: str) -> None:
+    label = (label or "").strip()
+    address = (address or "").strip()
+    if not address:
+        return
+    book = get_address_book()
+    # Update if the address already exists, else append.
+    for e in book:
+        if e.get("address") == address:
+            e["label"] = label
+            save_address_book(book)
+            return
+    book.append({"label": label, "address": address})
+    save_address_book(book)
+
+
+def remove_address(address: str) -> None:
+    book = [e for e in get_address_book() if e.get("address") != address]
+    save_address_book(book)

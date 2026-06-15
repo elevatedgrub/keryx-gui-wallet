@@ -42,6 +42,19 @@ class CliRunnable(QRunnable):
         try:
             result = self._fn(*self._args, **self._kwargs)
         except Exception as e:  # noqa — surface any driver exception to the UI
-            self.signals.error.emit(str(e))
+            self._safe_emit(self.signals.error, str(e))
             return
-        self.signals.finished.emit(result)
+        self._safe_emit(self.signals.finished, result)
+
+    @staticmethod
+    def _safe_emit(signal, payload):
+        """Emit a signal, swallowing the RuntimeError that occurs if the app is
+        shutting down and the underlying C++ QObject has already been deleted.
+        Without this, a worker finishing during window close raises
+        'wrapped C/C++ object of type CliSignals has been deleted'."""
+        try:
+            signal.emit(payload)
+        except RuntimeError:
+            # The signals object was destroyed (window closed mid-task). The
+            # result is no longer needed; drop it quietly.
+            pass

@@ -68,7 +68,9 @@ def _http_get_json(url: str):
 
 
 def get_address_transactions(address: str, limit: int = 1_000_000,
-                             base_url: str = "") -> Optional[List[Dict[str, Any]]]:
+                             base_url: str = "",
+                             stop_at_ids: set = None
+                             ) -> Optional[List[Dict[str, Any]]]:
     """
     Return a list of normalized transaction dicts for the given address, newest
     first, or None if the explorer can't be reached.
@@ -130,16 +132,24 @@ def get_address_transactions(address: str, limit: int = 1_000_000,
         if not isinstance(page_txs, list) or not page_txs:
             break
         new_count = 0
+        hit_known = False
         for tx in page_txs:
             if not isinstance(tx, dict):
                 continue
             tid = tx.get("tx_id") or tx.get("transaction_id") or ""
+            # Incremental mode: if we reach a tx we already have cached, we've
+            # caught up — collect the rest of THIS page then stop paging.
+            if stop_at_ids and tid and tid in stop_at_ids:
+                hit_known = True
+                continue
             if tid and tid in seen_ids:
                 continue
             if tid:
                 seen_ids.add(tid)
             collected.append(tx)
             new_count += 1
+        if hit_known:
+            break
         # End of history: a partial page, or this page added nothing new (which
         # would mean the API ignored offset and repeated — a safety stop).
         if new_count == 0 or len(page_txs) < PAGE:

@@ -736,6 +736,32 @@ _T = {
         "ko": "우선 수수료 (KRX)", "es": "comisión prioritaria (KRX)",
         "nl": "prioriteitskosten (KRX)",
     },
+    "address_book": {
+        "en": "Address book", "ru": "Адресная книга", "zh": "地址簿",
+        "id": "Buku alamat", "ko": "주소록", "es": "Libreta de direcciones",
+        "nl": "Adresboek",
+    },
+    "ab_label": {
+        "en": "label", "ru": "метка", "zh": "标签", "id": "label",
+        "ko": "레이블", "es": "etiqueta", "nl": "label",
+    },
+    "ab_address": {
+        "en": "keryx address", "ru": "адрес keryx", "zh": "keryx 地址",
+        "id": "alamat keryx", "ko": "keryx 주소", "es": "dirección keryx",
+        "nl": "keryx-adres",
+    },
+    "ab_save": {
+        "en": "Save", "ru": "Сохранить", "zh": "保存", "id": "Simpan",
+        "ko": "저장", "es": "Guardar", "nl": "Opslaan",
+    },
+    "ab_delete": {
+        "en": "Delete", "ru": "Удалить", "zh": "删除", "id": "Hapus",
+        "ko": "삭제", "es": "Eliminar", "nl": "Verwijderen",
+    },
+    "ab_use": {
+        "en": "Use", "ru": "Выбрать", "zh": "使用", "id": "Gunakan",
+        "ko": "사용", "es": "Usar", "nl": "Gebruiken",
+    },
     "amount_zero": {
         "en": "Amount cannot be zero", "ru": "Сумма не может быть нулевой",
         "zh": "金额不能为零", "id": "Jumlah tidak boleh nol",
