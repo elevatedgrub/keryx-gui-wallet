@@ -24,6 +24,9 @@ def _frame(dlg: QDialog, title: str):
     # Frameless: no OS title bar (which would otherwise show the app name
     # "Keryx Wallet"). The green heading inside is the only title. A subtle
     # border keeps it visually contained against the dark background.
+    # Note: on Wayland, frameless windows cannot be positioned by the client and
+    # are not auto-centered by the compositor, so they appear where the
+    # compositor places them. We accept that to keep the clean frameless look.
     dlg.setWindowTitle("")
     dlg.setModal(True)
     dlg.setMinimumWidth(_MIN_W)
@@ -37,10 +40,9 @@ def _frame(dlg: QDialog, title: str):
 
 
 def _center_on_parent(dlg: QDialog):
-    """Center a frameless dialog over its parent window. Frameless dialogs are
-    not auto-centered by the window manager (especially on Wayland, where they
-    otherwise land in the top-left of the screen), so we position them by hand
-    once their size is known."""
+    """Best-effort centering of the dialog over its parent. This works on X11
+    but is a no-op on Wayland, where clients cannot position their own windows;
+    there the dialog appears wherever the compositor places it."""
     parent = dlg.parent()
 
     def _do_center():
@@ -57,7 +59,6 @@ def _center_on_parent(dlg: QDialog):
 
     def _show(ev):
         _orig_show(ev)
-        # Defer until the dialog has its final size, then center.
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(0, _do_center)
 
