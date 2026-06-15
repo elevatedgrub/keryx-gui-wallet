@@ -62,8 +62,21 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Keryx Wallet")
         # Wide enough that each half (Receive / Send) fits its content; the
         # Receive half must hold the full ~62-char address.
-        self.resize(1140, 820)
-        self.setMinimumSize(900, 640)
+        # Default large enough that the whole dashboard (through the history and
+        # its pagination) is visible without scrolling. Cap to the available
+        # screen size so it never opens larger than the display (small laptops).
+        target_w, target_h = 1140, 900
+        try:
+            from PyQt6.QtWidgets import QApplication
+            screen = QApplication.primaryScreen()
+            if screen is not None:
+                avail = screen.availableGeometry()
+                target_w = min(target_w, avail.width() - 40)
+                target_h = min(target_h, avail.height() - 60)
+        except Exception:
+            pass
+        self.resize(target_w, target_h)
+        self.setMinimumSize(880, 600)
 
         self.driver = KeryxCliDriver(cli_path=cli_path, cli_subcommand="")
         self.pool = QThreadPool.globalInstance()

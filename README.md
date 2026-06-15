@@ -11,6 +11,11 @@ verified commands and displays results; it never touches a private key.
 - The `keryx-cli` binary, which **you provide** (see below)
 - System Qt libraries for PyQt6
 
+> **Tip:** For the best experience on Linux, run **Ubuntu on Xorg** rather than
+> Wayland. Wayland restricts how applications position their own windows, so some
+> dialogs may not appear centered. You can select "Ubuntu on Xorg" from the gear
+> menu on the login screen.
+
 ## The node you connect to (important)
 
 The wallet connects to a Keryx node over **wRPC/borsh on port 23110**. The node
@@ -32,14 +37,19 @@ If you run a public node for others, make sure port `23110` is reachable.
 
 ## Providing keryx-cli
 
-This wallet is a front-end for the official `keryx-cli` binary. It does not
-bundle keryx-cli — you supply it. The wallet locates it in this order:
+This wallet is a front-end for the official `keryx-cli` binary — it does not
+bundle it. The easiest way to let the wallet find keryx-cli is to install it
+system-wide:
 
-1. `--cli-path /full/path/to/keryx-cli` on launch
-2. the `KERYX_CLI` environment variable
-3. `keryx-cli` on your system `PATH`
+```bash
+cp /path/to/keryx-cli /usr/local/bin/keryx-cli
+```
 
-Build keryx-cli from source if you don't already have it:
+Then the wallet finds it automatically. Alternatively, point the wallet at it
+with `--cli-path /full/path/to/keryx-cli` or the `KERYX_CLI` environment
+variable.
+
+Don't have keryx-cli yet? Build it from source:
 
 ```bash
 git clone https://github.com/Keryx-Labs/keryx-node

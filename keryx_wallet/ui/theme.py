@@ -33,7 +33,7 @@ TOKENS = {
     "green_dim": "#1C7F55",
     "text":      "#C9D6CF",
     "text_dim":  "#6E8278",
-    "amber":     "#F5C542",
+    "amber":     "#D9A441",
     "red":       "#FF5C6C",
 }
 
