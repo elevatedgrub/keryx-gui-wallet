@@ -88,18 +88,15 @@ def get_address_transactions(address: str, limit: int = 100,
     bases = [base_url.rstrip("/")] if base_url else _bases()
     enc_addr = urllib.parse.quote(address, safe="")
 
-    # Find a working base/path and KEEP its first page (avoids a throwaway probe
-    # followed by a duplicate offset=0 fetch).
-    PAGE = 100
+    # Find a working base/path first (single probe), then page through it.
     working = None
-    first_raw = None
     for base in bases:
         for tmpl in _TX_PATHS:
             path = tmpl.format(addr=enc_addr)
-            url = f"{base}{path}?{urllib.parse.urlencode({'limit': PAGE, 'offset': 0})}"
+            url = f"{base}{path}?{urllib.parse.urlencode({'limit': 100})}"
             try:
-                first_raw = _http_get_json(url)
-                if first_raw is not None:
+                probe = _http_get_json(url)
+                if probe is not None:
                     working = (base, tmpl)
                     break
             except Exception:
@@ -112,20 +109,20 @@ def get_address_transactions(address: str, limit: int = 100,
     base, tmpl = working
     path = tmpl.format(addr=enc_addr)
 
-    # Page through with limit+offset until a short/empty page or the cap. The
-    # first page is already fetched above, so start the loop using it.
+    # The Keryx explorer caps a single response at 100 and paginates via
+    # ?limit=100&offset=N. Step offset by the page size each round and accumulate
+    # until a short/empty page (the end) or we reach the requested cap.
+    PAGE = 100
     collected = []
     seen_ids = set()
     offset = 0
-    raw = first_raw
     while len(collected) < limit:
-        if raw is None:
-            q = urllib.parse.urlencode({"limit": PAGE, "offset": offset})
-            url = f"{base}{path}?{q}"
-            try:
-                raw = _http_get_json(url)
-            except Exception:
-                break
+        q = urllib.parse.urlencode({"limit": PAGE, "offset": offset})
+        url = f"{base}{path}?{q}"
+        try:
+            raw = _http_get_json(url)
+        except Exception:
+            break
         page_txs = raw.get("transactions") if isinstance(raw, dict) else raw
         if not isinstance(page_txs, list) or not page_txs:
             break
@@ -145,7 +142,6 @@ def get_address_transactions(address: str, limit: int = 100,
         if new_count == 0 or len(page_txs) < PAGE:
             break
         offset += PAGE
-        raw = None  # force a fresh fetch for the next page
 
     txs = collected
     if not isinstance(txs, list):

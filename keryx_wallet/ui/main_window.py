@@ -1003,9 +1003,7 @@ class MainWindow(QMainWindow):
         from keryx_wallet.core.worker import CliRunnable
 
         def work():
-            # Fetch up to 1500 (covers 3 display pages). Fewer sequential API
-            # calls = much faster load; most addresses have far fewer.
-            return get_address_transactions(addr, limit=1500)
+            return get_address_transactions(addr)
 
         def done(result):
             if isinstance(result, list):
