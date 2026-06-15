@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Keryx Wallet
+Comment=Desktop wallet for the Keryx network
+Exec=python3 run.py
+Path=/home/quant/Downloads/kerx-GUI-wallet/keryx-wallet-gui
+Icon=/home/quant/Downloads/kerx-GUI-wallet/keryx-wallet-gui/assets/keryx.png
+Terminal=false
+Categories=Finance;Network;
+StartupWMClass=keryx-wallet

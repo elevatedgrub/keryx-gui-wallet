@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Keryx Wallet
+Comment=Desktop wallet for the Keryx network
+Exec=/opt/keryx-wallet/keryx-wallet
+Icon=/opt/keryx-wallet/keryx.png
+Terminal=false
+Categories=Finance;Network;
+StartupWMClass=keryx-wallet
