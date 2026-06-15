@@ -1027,44 +1027,75 @@ class MainWindow(QMainWindow):
             self.history_view.setHtml(
                 f"<div style='color:{TOKENS['text_dim']};'>{_t('loading_address')}</div>")
             return
+        # Guard against overlapping loads (auto-refresh racing itself / a manual
+        # reload). Without this, two loads render at different stages and the
+        # list visibly bounces between counts.
+        if getattr(self, "_history_loading", False):
+            return
+        self._history_loading = True
 
-        from keryx_wallet.core.explorer import get_address_transactions
+        # 1. Show cached history instantly — but ONLY on the first load (when the
+        # view is still empty). On periodic refreshes the list is already shown,
+        # so re-rendering the cache here is what caused the flicker.
+        from keryx_wallet.core.explorer import (
+            get_address_transactions, get_address_tx_count)
         from keryx_wallet.core.worker import CliRunnable
         from keryx_wallet.core import history_cache
 
-        # 1. Show cached history instantly (from a previous run), if any.
+        # view is still empty). On periodic refreshes the list is already shown,
+        # so re-rendering the cache here is what caused the flicker.
         cached = history_cache.get_cached(addr)
-        if cached:
+        first_load = not getattr(self, "_explorer_txs", None)
+        if cached and first_load:
             self._render_history_explorer(cached)
 
         known = history_cache.known_tx_ids(addr)
 
         def work():
+            # Authoritative total from the explorer (matches the website).
+            count = get_address_tx_count(addr)
             if known:
                 # Incremental: fetch only txs newer than what we have cached.
                 new_txs = get_address_transactions(addr, stop_at_ids=known)
                 if isinstance(new_txs, list):
-                    return ("merge", new_txs)
-                return ("none", None)
+                    return ("merge", new_txs, count)
+                return ("none", None, count)
             # First time for this address: full fetch.
             full = get_address_transactions(addr)
-            return ("full", full)
+            return ("full", full, count)
 
         def done(result):
-            mode, data = result if isinstance(result, tuple) else ("none", None)
+            self._history_loading = False
+            if isinstance(result, tuple) and len(result) == 3:
+                mode, data, count = result
+            elif isinstance(result, tuple):
+                mode, data = result; count = None
+            else:
+                mode, data, count = "none", None, None
+            if isinstance(count, int) and count > 0:
+                self._explorer_total = count
             if mode == "full" and isinstance(data, list):
                 history_cache.set_cached(addr, data)
                 self._render_history_explorer(data)
             elif mode == "merge" and isinstance(data, list):
-                merged = history_cache.merge_new(addr, data)
-                self._render_history_explorer(merged)
+                if data:
+                    # Only re-render if the merge actually brought in new txs.
+                    merged = history_cache.merge_new(addr, data)
+                    self._render_history_explorer(merged)
+                elif first_load and cached:
+                    # First load, no new txs: make sure the cache is shown.
+                    self._render_history_explorer(cached)
+                elif isinstance(count, int) and getattr(self, "_explorer_txs", None):
+                    # No new txs but the authoritative count updated — refresh
+                    # just the header by re-rendering the current list.
+                    self._render_history_explorer(self._explorer_txs)
             elif not cached:
-                # Nothing cached and fetch failed — show unreachable message.
                 self.history_view.setHtml(
                     f"<div style='color:{TOKENS['text_dim']};'>"
                     "Could not reach the explorer. Transactions unavailable.</div>")
 
         def failed(_e):
+            self._history_loading = False
             if not cached:
                 self.history_view.setHtml(
                     f"<div style='color:{TOKENS['text_dim']};'>"
@@ -1078,6 +1109,20 @@ class MainWindow(QMainWindow):
     def _render_history_explorer(self, txs: list):
         """Render explorer-sourced transactions with pagination (500/page).
         The size filter applies across ALL transactions before paging."""
+        # Defensive de-duplication by tx_id: even if the cache or a merge ever
+        # introduced a repeat, never display or count it twice. Preserves order
+        # (first occurrence wins, which is the newest).
+        if txs:
+            _seen = set()
+            _deduped = []
+            for t in txs:
+                tid = t.get("tx_id")
+                if tid and tid in _seen:
+                    continue
+                if tid:
+                    _seen.add(tid)
+                _deduped.append(t)
+            txs = _deduped
         self._explorer_txs = txs
         thresh = getattr(self, "_tx_min_size", 0.0)
         shown = txs
@@ -1102,7 +1147,14 @@ class MainWindow(QMainWindow):
         import datetime
         import html
         green = TOKENS["green"]; text = TOKENS["text"]; muted = TOKENS["text_dim"]
-        header = _t("tx_count", n=f"{total:,}")
+        # Prefer the explorer's authoritative total (matches the website). Only
+        # use it when no size filter is active — with a filter, the meaningful
+        # number is how many txs passed the filter, not the chain total.
+        auth_total = getattr(self, "_explorer_total", None)
+        if thresh <= 0 and isinstance(auth_total, int) and auth_total > 0:
+            header = _t("tx_count", n=f"{auth_total:,}")
+        else:
+            header = _t("tx_count", n=f"{total:,}")
         if pages > 1:
             header += " — " + _t("showing_range",
                                   a=f"{start + 1:,}", b=f"{start + len(page_items):,}")

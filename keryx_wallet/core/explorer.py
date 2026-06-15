@@ -67,6 +67,31 @@ def _http_get_json(url: str):
         return json.loads(data.decode("utf-8", "replace"))
 
 
+def get_address_tx_count(address: str, base_url: str = "") -> Optional[int]:
+    """Return the explorer's authoritative transaction count for an address
+    (the API's `total_tx_count`), or None if unavailable. This is the number
+    the explorer website shows — it can differ slightly from the count of rows
+    we page through (which may include boundary/pending overlaps)."""
+    address = (address or "").strip()
+    if not address:
+        return None
+    bases = [base_url.rstrip("/")] if base_url else _bases()
+    enc = urllib.parse.quote(address, safe="")
+    for base in bases:
+        url = f"{base}/addresses/{enc}"
+        try:
+            data = _http_get_json(url)
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            n = data.get("total_tx_count")
+            if n is None:
+                n = data.get("transaction_count")
+            if isinstance(n, int):
+                return n
+    return None
+
+
 def get_address_transactions(address: str, limit: int = 1_000_000,
                              base_url: str = "",
                              stop_at_ids: set = None
@@ -137,15 +162,18 @@ def get_address_transactions(address: str, limit: int = 1_000_000,
             if not isinstance(tx, dict):
                 continue
             tid = tx.get("tx_id") or tx.get("transaction_id") or ""
+            # A row with no tx_id can't be a real, addressable transaction —
+            # skip it so it can't inflate the count or appear as a blank entry.
+            if not tid:
+                continue
             # Incremental mode: if we reach a tx we already have cached, we've
             # caught up — collect the rest of THIS page then stop paging.
-            if stop_at_ids and tid and tid in stop_at_ids:
+            if stop_at_ids and tid in stop_at_ids:
                 hit_known = True
                 continue
-            if tid and tid in seen_ids:
+            if tid in seen_ids:
                 continue
-            if tid:
-                seen_ids.add(tid)
+            seen_ids.add(tid)
             collected.append(tx)
             new_count += 1
         if hit_known:

@@ -44,14 +44,29 @@ def _save_all(data: Dict[str, Any]) -> None:
 
 
 def get_cached(address: str) -> List[Dict[str, Any]]:
-    """Return the cached tx list for an address (newest-first), or []."""
+    """Return the cached tx list for an address (newest-first), or [].
+    De-duplicates by tx_id on read so any previously-corrupted cache
+    self-heals (and is rewritten clean if dupes were found)."""
     address = (address or "").strip()
     if not address:
         return []
     entry = _load_all().get(address)
-    if isinstance(entry, dict) and isinstance(entry.get("txs"), list):
-        return entry["txs"]
-    return []
+    if not (isinstance(entry, dict) and isinstance(entry.get("txs"), list)):
+        return []
+    txs = entry["txs"]
+    seen = set()
+    deduped = []
+    for t in txs:
+        tid = t.get("tx_id")
+        if tid and tid in seen:
+            continue
+        if tid:
+            seen.add(tid)
+        deduped.append(t)
+    if len(deduped) != len(txs):
+        # Found and removed duplicates — persist the cleaned list.
+        set_cached(address, deduped)
+    return deduped
 
 
 def set_cached(address: str, txs: List[Dict[str, Any]]) -> None:

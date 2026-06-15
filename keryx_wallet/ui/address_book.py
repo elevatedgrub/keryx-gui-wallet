@@ -29,7 +29,7 @@ class AddressBookDialog(QDialog):
         self._chosen = ""
         self.setWindowTitle("")
         self.setModal(True)
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(620)
         self.setWindowFlags(
             Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setStyleSheet(
@@ -54,6 +54,7 @@ class AddressBookDialog(QDialog):
             f"QListWidget::item {{ padding:6px; }}"
             f"QListWidget::item:selected {{ background-color:{TOKENS['green_dim']}; "
             f"color:{TOKENS['bg']}; }}")
+        self.list.setWordWrap(True)  # wrap the full address rather than clip it
         self.list.itemDoubleClicked.connect(lambda _i: self._use_selected())
         v.addWidget(self.list)
 
@@ -116,8 +117,9 @@ class AddressBookDialog(QDialog):
         for e in config.get_address_book():
             label = e.get("label") or "(no label)"
             addr = e.get("address", "")
-            short = addr if len(addr) <= 28 else addr[:14] + "…" + addr[-10:]
-            item = QListWidgetItem(f"{label}\n{short}")
+            # Show the FULL address (no middle truncation). The item wraps to
+            # two lines: label on top, complete address below in monospace.
+            item = QListWidgetItem(f"{label}\n{addr}")
             item.setData(Qt.ItemDataRole.UserRole, addr)
             self.list.addItem(item)
 
