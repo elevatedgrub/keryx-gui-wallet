@@ -96,6 +96,15 @@ class MainWindow(QMainWindow):
         self._balance_timer.setInterval(10_000)
         self._balance_timer.timeout.connect(self._auto_refresh_balance)
 
+        # Separate, slower timer for history. It calls _load_history, which is
+        # INCREMENTAL (fetches only txs newer than what's cached) and guarded
+        # against overlap, and only re-renders when there's actually new data —
+        # so unlike the old full-reload-every-10s (which caused flicker/hangs),
+        # this is lightweight and safe to run periodically.
+        self._history_timer = QTimer(self)
+        self._history_timer.setInterval(45_000)  # 45s
+        self._history_timer.timeout.connect(self._auto_refresh_history)
+
         self.stack = QStackedWidget()
 
         # Header bar at the very top, above all screens: logo on the left, a
@@ -490,6 +499,7 @@ class MainWindow(QMainWindow):
 
         self._submit(self.driver.mute_notifications, after_mute)
         self._balance_timer.start()
+        self._history_timer.start()
 
     def _do_open_wallet(self):
         name = self.open_combo.currentText().strip()
@@ -982,6 +992,21 @@ class MainWindow(QMainWindow):
                               res.error or "Account creation failed.")
         self.status("Creating account…")
         self._submit(self.driver.create_account, done, name.strip(), pw)
+
+    def _auto_refresh_history(self):
+        # Periodically pull NEW transactions into the history (incremental fetch
+        # via the cache). Skips if a load is already running or there's no
+        # address yet. This is what keeps the list current without the user
+        # having to switch accounts or reopen.
+        if not self._wallet_open:
+            return
+        if self.stack.currentWidget() is not self.dash_screen:
+            return
+        if not getattr(self, "_current_address", ""):
+            return
+        if getattr(self, "_history_loading", False):
+            return
+        self._load_history()
 
     def _auto_refresh_balance(self):
         if not self._wallet_open:
@@ -1604,6 +1629,10 @@ class MainWindow(QMainWindow):
     def _switch_wallet(self):
         """Close the open wallet and return to the Wallet Options screen."""
         self._balance_timer.stop()
+        try:
+            self._history_timer.stop()
+        except Exception:
+            pass
         self._wallet_open = False
         self._wallet_name = ""
         self._current_address = ""
@@ -1738,6 +1767,7 @@ class MainWindow(QMainWindow):
         # Stop periodic work first so no new tasks are queued during teardown.
         try:
             self._balance_timer.stop()
+            self._history_timer.stop()
         except Exception:
             pass
         self._wallet_open = False
