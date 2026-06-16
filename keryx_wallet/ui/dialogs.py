@@ -176,6 +176,34 @@ def get_password(parent, title: str, prompt: str):
     return "", False
 
 
+def get_text(parent, title: str, prompt: str):
+    """Themed single-line text input (visible, not masked). The prompt is the
+    green heading. Returns (text, ok)."""
+    dlg = QDialog(parent)
+    _frame(dlg, title)
+    v = QVBoxLayout(dlg)
+    v.addWidget(_title_label(prompt, TOKENS["green"]))
+    field = QLineEdit()
+    field.setStyleSheet(
+        f"QLineEdit {{ background:{TOKENS['surface_2']}; color:{TOKENS['text']}; "
+        f"border:1px solid {TOKENS['border']}; border-radius:6px; padding:7px 9px; "
+        f"font-family:{MONO}; }}"
+        f"QLineEdit:focus {{ border-color:{TOKENS['green']}; }}")
+    v.addWidget(field)
+    row = QHBoxLayout(); row.addStretch(1)
+    cancel = _btn(_t("cancel"), primary=False)
+    okb = _btn(_t("ok"), primary=True)
+    cancel.clicked.connect(dlg.reject)
+    okb.clicked.connect(dlg.accept)
+    field.returnPressed.connect(dlg.accept)
+    row.addWidget(cancel); row.addWidget(okb)
+    v.addLayout(row)
+    field.setFocus()
+    if dlg.exec() == QDialog.DialogCode.Accepted:
+        return field.text(), True
+    return "", False
+
+
 # ── Drop-in wrappers matching QMessageBox.<level>(parent, title, text) ────────
 def _warn(parent, title, text, *args, **kwargs):
     message(parent, title, str(text), "warn")

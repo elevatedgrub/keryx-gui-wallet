@@ -319,12 +319,14 @@ class MainWindow(QMainWindow):
                                 "Enter your node's wRPC address to connect.")
             return
         self.connect_btn.setEnabled(False)
+        self._connect_btn_text = self.connect_btn.text()
+        self.connect_btn.setText(_t("connecting"))
         self.status(f"Selecting {net}…")
 
         def after_connect(res: CliResult):
             self.connect_btn.setEnabled(True)
-            low = (res.output or "").lower() + (res.error or "").lower()
-            if res.ok and "error" not in low and "no network" not in low:
+            self.connect_btn.setText(getattr(self, "_connect_btn_text", _t("connect")))
+            if res.ok:
                 self._set_connection_indicator(True)
                 # Remember this node for next launch.
                 try:
@@ -341,6 +343,8 @@ class MainWindow(QMainWindow):
         def after_network(res: CliResult):
             if not res.ok:
                 self.connect_btn.setEnabled(True)
+                self.connect_btn.setText(
+                    getattr(self, "_connect_btn_text", _t("connect")))
                 dialogs._warn(self, "Network", res.error or "Network select failed.")
                 return
             self.status(f"Connecting to {address}…")
@@ -454,11 +458,37 @@ class MainWindow(QMainWindow):
     def _enter_dashboard(self, wallet_name: str):
         self._wallet_open = True
         self._wallet_name = wallet_name
+        self._selected_account_index = 0  # default/main account on open
+        self._current_address = ""
+        self._explorer_txs = []
+        self._accounts = []
         self.stack.setCurrentWidget(self.dash_screen)
         self.history_view.setHtml(
             f"<div style='color:{TOKENS['text_dim']};'>{_t('loading_transactions')}</div>")
-        self._refresh_accounts()
-        self._show_address()   # resolves address, then loads explorer history
+        self.addr_label.setText(_t("loading_address"))
+
+        # Single source of truth: run `list` ONCE. Its output has every account's
+        # name, balance, AND address. From it we populate the switcher, show the
+        # balance, and display the main account's address directly — no separate
+        # `address` command racing against it. Mute first so async notifications
+        # don't pollute the buffer.
+        def after_list(res: CliResult):
+            if res.ok:
+                self._last_list_output = res.output or ""
+                self._update_balance_display(res.output or "")
+                self._populate_account_combo(res.output or "")
+                # Show the main account's address straight from parsed data.
+                acct = next((a for a in self._accounts if a["index"] == 0), None)
+                if acct and acct.get("address"):
+                    self._show_address(acct["address"])
+                else:
+                    self._show_address()  # fallback: ask CLI once
+            self._refresh_price()
+
+        def after_mute(_res):
+            self._submit(self.driver.run, after_list, "list")
+
+        self._submit(self.driver.mute_notifications, after_mute)
         self._balance_timer.start()
 
     def _do_open_wallet(self):
@@ -598,6 +628,23 @@ class MainWindow(QMainWindow):
         export_btn.clicked.connect(self._do_export)
         top.addWidget(export_btn)
         v.addLayout(top)
+
+        # Account switcher row — dropdown of accounts in the open wallet, plus a
+        # button to create a new account. Hidden until accounts are loaded.
+        acct_row = QHBoxLayout()
+        acct_lbl = QLabel(_t("account"))
+        acct_lbl.setStyleSheet(f"color:{TOKENS['text_dim']};")
+        self.account_combo = QComboBox()
+        self.account_combo.setMinimumWidth(280)
+        self.account_combo.activated.connect(self._on_account_selected)
+        self.new_account_btn = QPushButton(_t("new_account"))
+        self.new_account_btn.setToolTip(_t("new_account_tip"))
+        self.new_account_btn.clicked.connect(self._do_create_account)
+        acct_row.addWidget(acct_lbl)
+        acct_row.addWidget(self.account_combo, 1)
+        acct_row.addWidget(self.new_account_btn)
+        self._account_row_widgets = (acct_lbl, self.account_combo, self.new_account_btn)
+        v.addLayout(acct_row)
 
         # Balance — "wallet : balance", large modern font
         bal_box = QGroupBox(_t("balance"))
@@ -768,10 +815,21 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(scroll)
 
     def _update_balance_display(self, output: str):
+        from keryx_wallet.core.cli_driver import KeryxCliDriver
         bal = ""
-        m = re.search(r"\[[0-9a-f]+\]:\s*(.+?)\s*KRX", output or "", re.IGNORECASE)
-        if m:
-            bal = m.group(1).strip()
+        # Parse all accounts and pick the SELECTED one's balance — not just the
+        # first match (which is always account 0/main). The selected account is
+        # tracked by index in self._selected_account_index.
+        accts = KeryxCliDriver.parse_accounts(output or "")
+        sel = getattr(self, "_selected_account_index", 0)
+        if accts:
+            match = next((a for a in accts if a["index"] == sel), accts[0])
+            bal = match.get("balance", "")
+        else:
+            # Fallback: first [id]: balance KRX in the output.
+            m = re.search(r"\[[0-9a-f]+\]:\s*(.+?)\s*KRX", output or "", re.IGNORECASE)
+            if m:
+                bal = m.group(1).strip()
         if not bal or bal.upper() == "N/A":
             self.balance_label.setText(f"{bal or '—'} KRX")
             return
@@ -818,23 +876,129 @@ class MainWindow(QMainWindow):
             if res.ok:
                 self._last_list_output = res.output or ""
                 self._update_balance_display(res.output or "")
+                self._populate_account_combo(res.output or "")
             else:
                 pass
         self._submit(self.driver.run, done, "list")
         self._refresh_price()
+
+    def _populate_account_combo(self, list_output: str):
+        """Fill the account switcher from `list` output. Shows the dropdown only
+        when the wallet has more than one account (single-account wallets don't
+        need a switcher, but the New Account button stays available)."""
+        if not hasattr(self, "account_combo"):
+            return
+        from keryx_wallet.core.cli_driver import KeryxCliDriver
+        accts = KeryxCliDriver.parse_accounts(list_output)
+        self._accounts = accts
+        # Remember the current selection by id so a refresh doesn't reset it.
+        cur_id = None
+        if self.account_combo.currentIndex() >= 0 and accts:
+            data = self.account_combo.currentData()
+            cur_id = data
+        self.account_combo.blockSignals(True)
+        self.account_combo.clear()
+        for a in accts:
+            label = a["name"] or _t("main_account")
+            label = f"{label} — {a['balance']} KRX"
+            self.account_combo.addItem(label, a["index"])
+        # Restore selection if we had one, else default to account 0.
+        if cur_id is not None:
+            i = self.account_combo.findData(cur_id)
+            if i >= 0:
+                self.account_combo.setCurrentIndex(i)
+        self.account_combo.blockSignals(False)
+        # Show the switcher row only when there's more than one account.
+        multi = len(accts) > 1
+        for wdg in getattr(self, "_account_row_widgets", ()):
+            wdg.setVisible(True)  # keep visible so New Account is always reachable
+        self.account_combo.setVisible(multi or True)
+
+    def _on_account_selected(self, combo_index: int):
+        """User picked an account from the dropdown — select it in the CLI and
+        refresh address/balance/history for it."""
+        if combo_index < 0:
+            return
+        acct_index = self.account_combo.itemData(combo_index)
+        if acct_index is None:
+            return
+        self._selected_account_index = int(acct_index)
+
+        # Pull the selected account's address + balance from the already-parsed
+        # `list` data (self._accounts). No `address`/`list` command races here —
+        # switching only issues the `select` command, then updates the display
+        # from data we already have.
+        acct = next((a for a in getattr(self, "_accounts", [])
+                     if a["index"] == int(acct_index)), None)
+        new_addr = acct["address"] if acct else ""
+        new_bal = acct["balance"] if acct else ""
+
+        def done(res: CliResult):
+            if res.ok:
+                # Update balance from parsed data (instant), and show the address
+                # directly (no CLI command). _show_address triggers history load.
+                if new_bal:
+                    self.balance_label.setText(f"{new_bal} KRX")
+                self._show_address(new_addr)
+            else:
+                dialogs._warn(self, _t("account"),
+                              res.error or "Could not switch account.")
+
+        # Clear stale data immediately so the user never sees the old account.
+        self._current_address = ""
+        self._explorer_txs = []
+        self.addr_label.setText(_t("loading_address"))
+        self.qr_label.clear()
+        self.history_view.setHtml(
+            f"<div style='color:{TOKENS['text_dim']};'>{_t('loading_transactions')}</div>")
+        self.status("Selecting account…")
+        self._submit(self.driver.select_account, done, int(acct_index))
+
+    def _do_create_account(self):
+        """Prompt for a name + password, create a new account, refresh the list."""
+        from keryx_wallet.ui import dialogs as _dlg
+        # Explain the recovery implication up front — extra accounts do NOT
+        # auto-restore from the phrase on another wallet; they must be recreated
+        # in order. Users must understand this before creating accounts.
+        proceed = _dlg.confirm(
+            self, _t("new_account"), _t("account_recovery_warning"),
+            yes_text=_t("continue_btn"), no_text=_t("cancel"))
+        if not proceed:
+            return
+        name, ok = _dlg.get_text(self, _t("new_account"), _t("account_name_prompt"))
+        if not ok or not name.strip():
+            return
+        pw, ok = _dlg.get_password(self, "", _t("enter_password"))
+        if not ok or not pw:
+            return
+
+        def done(res: CliResult):
+            if res.ok:
+                dialogs._info(self, _t("new_account"),
+                              _t("account_created", name=name.strip()))
+                self._refresh_accounts()
+            else:
+                dialogs._warn(self, _t("new_account"),
+                              res.error or "Account creation failed.")
+        self.status("Creating account…")
+        self._submit(self.driver.create_account, done, name.strip(), pw)
 
     def _auto_refresh_balance(self):
         if not self._wallet_open:
             return
         if self.stack.currentWidget() is not self.dash_screen:
             return
+        # Lightweight: refresh balance + account list from a single `list` call.
+        # Do NOT reload history here — it's already loaded and the cache picks up
+        # new txs on the next explicit load. Forcing a history reload every 10s
+        # piled up explorer fetches and CLI commands, causing the hangs.
         def done(res: CliResult):
             if res.ok and res.output:
                 self._last_list_output = res.output
                 self._update_balance_display(res.output)
+                self._populate_account_combo(res.output)
         self._submit(self.driver.run, done, "list")
         self._refresh_price()
-        self._load_history()
 
     def _fit_address_font(self, w):
         # No longer used — the address now wraps in a QTextEdit instead of
@@ -919,29 +1083,37 @@ class MainWindow(QMainWindow):
             btn.setText(_t("copied"))
             QTimer.singleShot(1200, lambda: btn.setText(orig))
 
-    def _show_address(self):
-        def done(res: CliResult):
-            if not res.ok:
-                self.addr_label.setText(_t("loading_address"))
+    def _show_address(self, addr: str = None):
+        """Display a receive address + QR. If `addr` is provided (from the parsed
+        `list` output, which already contains every account's address), it's
+        shown directly with NO CLI command — this avoids the racing/desync that
+        a separate `address` command caused. Falls back to the `address` command
+        only when no address is supplied (e.g. the very first load)."""
+        def _display(a: str):
+            a = (a or "").strip()
+            if not a:
+                self.addr_label.setText("(no address)")
+                self.qr_label.clear()
                 return
+            self._current_address = a
+            self.addr_label.setText(a)
+            self.addr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            pix = address_qr_pixmap(a, size=120)
+            if pix:
+                self.qr_label.setPixmap(pix)
+            else:
+                self.qr_label.setText("(install qrcode + Pillow for QR)")
+            self._load_history()
+
+        if addr:
+            _display(addr)
+            return
+
+        # Fallback: no address handed in — ask the CLI once (no retry loops).
+        def done(res: CliResult):
             text = (res.output or "").strip()
             m = re.search(r"(ker[xy][a-z]*:[0-9a-z]+)", text, re.IGNORECASE)
-            addr = m.group(1) if m else ""
-            self._current_address = addr
-            self.addr_label.setText(addr or "(no address)")
-            self.addr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            if addr:
-                # QR 50% smaller (240 -> 120), centered under the address.
-                pix = address_qr_pixmap(addr, size=120)
-                if pix:
-                    self.qr_label.setPixmap(pix)
-                else:
-                    self.qr_label.setText("(install qrcode + Pillow for QR)")
-                # Now that we have the address, load explorer history.
-                self._load_history()
-            else:
-                self.qr_label.clear()
-        self.status("Requesting address…")
+            _display(m.group(1) if m else "")
         self._submit(self.driver.run, done, "address")
 
     @staticmethod
@@ -1065,12 +1237,14 @@ class MainWindow(QMainWindow):
         self.history_view.setHtml("".join(parts))
 
     def _load_history(self):
-        # Explorer is the sole source of transaction history (queried by address,
-        # so it's the true on-chain history regardless of wallet instance).
+        # Explorer is the sole source of transaction history (queried by address).
         addr = self._current_address
         if not addr:
+            # No address available — show the transactions placeholder and stop.
+            # (With the list-driven flow the address is set before this is called,
+            # so this is just a safe guard, not a retry loop.)
             self.history_view.setHtml(
-                f"<div style='color:{TOKENS['text_dim']};'>{_t('loading_address')}</div>")
+                f"<div style='color:{TOKENS['text_dim']};'>{_t('loading_transactions')}</div>")
             return
         # Guard against overlapping loads (auto-refresh racing itself / a manual
         # reload). Without this, two loads render at different stages and the
@@ -1087,8 +1261,6 @@ class MainWindow(QMainWindow):
         from keryx_wallet.core.worker import CliRunnable
         from keryx_wallet.core import history_cache
 
-        # view is still empty). On periodic refreshes the list is already shown,
-        # so re-rendering the cache here is what caused the flicker.
         cached = history_cache.get_cached(addr)
         first_load = not getattr(self, "_explorer_txs", None)
         if cached and first_load:
@@ -1568,15 +1740,19 @@ class MainWindow(QMainWindow):
             self._balance_timer.stop()
         except Exception:
             pass
-        # Give in-flight worker threads a brief moment to finish so they don't
-        # emit into a half-destroyed window (the _safe_emit guard catches the
-        # rest). 1.5s is enough for quick calls; long ones are abandoned.
+        self._wallet_open = False
+        # Kill the CLI subprocess FIRST. Any worker thread blocked waiting on a
+        # CLI command (a slow `select`/`list`/history) will then unblock with an
+        # error instead of hanging — which is what made the window refuse to
+        # close ("not responding / force quit"). The _safe_emit guard swallows
+        # any signal those workers try to emit into the closing window.
         try:
-            self.pool.waitForDone(1500)
+            self.driver.force_stop()
         except Exception:
             pass
+        # Brief, bounded wait — workers should be unblocked now. Don't wait long.
         try:
-            self.driver.stop()
+            self.pool.waitForDone(400)
         except Exception:
             pass
         super().closeEvent(event)
