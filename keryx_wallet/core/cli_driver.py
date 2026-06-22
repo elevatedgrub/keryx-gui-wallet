@@ -133,6 +133,10 @@ class KeryxCliDriver:
         self._cli_subcommand = cli_subcommand
         self._child: Optional["pexpect.spawn"] = None
         self._lock = threading.RLock()
+        # keryx-cli starts with async notifications MUTED. We track the state so
+        # set_muted() only toggles when needed (the `mute` command is a toggle
+        # with no status query; a blind call would UNMUTE and desync the buffer).
+        self._muted = True
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -213,6 +217,8 @@ class KeryxCliDriver:
                 ) from e
             # Wait for the shell to be ready to accept commands.
             self._wait_ready(timeout=DEFAULT_TIMEOUT)
+            # A freshly spawned keryx-cli starts muted.
+            self._muted = True
 
     def stop(self) -> None:
         """Cleanly exit the CLI shell."""
@@ -232,43 +238,23 @@ class KeryxCliDriver:
                     pass
                 self._child = None
 
-    def force_stop(self) -> None:
-        """Immediately terminate the CLI subprocess WITHOUT acquiring the lock.
-        Used on application shutdown: if a worker thread is stuck mid-command it
-        holds the lock, so a normal stop() would block forever (the 'not
-        responding / force quit' freeze). Killing the child unblocks that worker."""
-        child = self._child
-        self._child = None
-        if child is None:
-            return
-        try:
-            child.kill(9)  # SIGKILL the underlying process
-        except Exception:
-            pass
-        try:
-            child.close(force=True)
-        except Exception:
-            pass
-
     def is_alive(self) -> bool:
         with self._lock:
             return self._child is not None and self._child.isalive()
 
     # ── low-level command submission ─────────────────────────────────────────
 
-    def _flush_buffer(self, settle: float = 0.0):
+    def _flush_buffer(self):
         """
-        Drain pending data from the child's read buffer so the next expect()
-        starts clean. With settle=0 it only removes bytes ALREADY waiting; with a
-        small settle (e.g. 0.15s) it also absorbs async notification output that
-        trickles in just after a command completes (balance/pending updates),
-        which otherwise desyncs the next command's read.
+        Drain any already-pending data from the child's read buffer so the next
+        expect() starts clean. Uses a very short timeout: it only removes bytes
+        that are ALREADY waiting, not output that has yet to be produced.
         """
         if self._child is None:
             return
         try:
             while True:
-                self._child.read_nonblocking(size=4096, timeout=settle)
+                self._child.read_nonblocking(size=4096, timeout=0.0)
         except Exception:
             pass  # nothing left to read
 
@@ -331,7 +317,7 @@ class KeryxCliDriver:
                 return CliResult(command, "", ok=False,
                                  error="CLI process is not running.")
             try:
-                self._flush_buffer(settle=0.12)
+                self._flush_buffer()
                 self._submit_line(command)
                 output = self._wait_ready(timeout=timeout)
                 cleaned = _clean_output(self._strip_echo(command, output))
@@ -642,6 +628,10 @@ class KeryxCliDriver:
 
     # Verified prompt strings from the real keryx-cli binary.
     PW_PROMPT = re.compile(r"(?i)enter wallet password:\s*")
+    # The numbered account-selection prompt. ONLY appears with 2+ accounts; a
+    # single-account wallet auto-selects on bare `select` (no prompt). Ends in
+    # ": " so it never collides with the READY_PROMPT ("$ ").
+    SELECT_PROMPT = re.compile(r"(?i)please select account\s*\[\d+\.\.\d+\][^\n]*:\s*")
     # `send` output line, e.g. "Send - Amount: 1.5 KRX  Fees: 0.1 KRX  Total: 1.6 KRX  UTXOs: 3"
     SEND_RESULT = re.compile(
         r"Send\s*-\s*Amount:\s*([\d.]+)\s*KRX\s+"
@@ -664,17 +654,18 @@ class KeryxCliDriver:
                              error=f"Network must be one of: {', '.join(sorted(valid))}.")
         return self.run(f"network {network}", timeout=timeout)
 
-    # Failure signatures the CLI prints when the node is unreachable. A failed
-    # connect surfaces one of these; a successful connect prints "Connected to
-    # Keryx node ...". We key on the FAILURE messages (see connect()), because
-    # the success banner can print after the prompt returns and be missed.
+    # wRPC/WebSocket failure signatures emitted by keryx-cli when the node is
+    # unreachable. The connect command returns to the prompt but these errors
+    # stream into the output — we must detect them to know the connect failed.
     CONNECT_FAIL_SIGNATURES = (
         "no route to host",
         "connection timeout",
         "connection refused",
         "websocket error",
+        "io error",
         "connection reset",
         "failed to connect",
+        "not connected",
     )
 
     def connect(self, address: str, timeout: int = CONNECT_TIMEOUT) -> CliResult:
@@ -682,10 +673,10 @@ class KeryxCliDriver:
         Connect to a node with `connect <address>`. The address is a required
         argument (verified). Must be called after select_network.
 
-        Detection strategy: a successful connect prints "Connected to Keryx node
-        version X at ws://..." synchronously. We treat the connection as live
-        only if that line appears; anything else (timeout, refused, no route) is
-        a failure. This avoids the timing fragility of scanning for async errors.
+        The address is the user's own wRPC-reachable node address. The wRPC
+        WebSocket connects asynchronously, so a node that is down still lets the
+        `connect` command return; we scan the output for failure signatures and
+        report those as a failed connection.
         """
         address = (address or "").strip()
         if not address:
@@ -696,17 +687,15 @@ class KeryxCliDriver:
                              error="Node address must not contain whitespace.")
         res = self.run(f"connect {address}", timeout=timeout)
         low = ((res.output or "") + " " + (res.error or "")).lower()
-        # Detection: a failed connect prints a distinctive wRPC error
-        # ("no route to host", "connection refused", "connection timeout", etc.).
-        # A successful connect prints "Connected to Keryx node ...". We treat the
-        # connection as FAILED only if an explicit failure signature is present.
-        # We do NOT require the success banner to be captured, because it can
-        # print just after the prompt returns and may not be in this buffer — and
-        # false-failing a good connection is worse than the rare false-success.
         if any(sig in low for sig in self.CONNECT_FAIL_SIGNATURES):
             return CliResult("connect", res.output, ok=False,
                              error="Node unreachable (wRPC connection failed).")
-        return CliResult("connect", res.output, ok=True, error="")
+        # NOTE: We intentionally do NOT drain extra output here. A post-connect
+        # read left the pexpect buffer desynced — the connection banner bled into
+        # the next command (wallet open), causing intermittent open failures.
+        # The synchronous check above catches the common unreachable-node cases;
+        # the connection indicator also reflects state once a command succeeds.
+        return res
 
     def open_wallet(self, name: str, password: str,
                     timeout: int = DEFAULT_TIMEOUT) -> CliResult:
@@ -770,6 +759,303 @@ class KeryxCliDriver:
                 return CliResult(cmd, output.strip(), ok=False,
                                  error="Wrong password.")
             return CliResult(cmd, output.strip(), ok=True)
+
+    # Success line: "account created: <name> [<id>]: <bal> KRX" (name may be empty)
+    ACCOUNT_CREATED = re.compile(r"(?i)account created:\s*(.*?)\s*\[([0-9a-f]+)\]")
+    # Optional name prompt from `account create <type>` (no inline name).
+    ACCOUNT_NAME_PROMPT = re.compile(r"(?i)enter account name[^\n]*:\s*")
+
+    def create_account(self, name: str, password: str,
+                       acct_type: str = "bip32",
+                       timeout: int = DEFAULT_TIMEOUT) -> CliResult:
+        """
+        Create a new account (type REQUIRED: bip32|multisig|legacy). The name is
+        OPTIONAL — an empty name creates an UNNAMED account (shown by its id).
+        VERIFIED flow (no inline name, so an empty name can be passed):
+          account create <type>
+          -> Please enter account name (optional, <enter> to skip): -> name (may be "")
+          -> Enter wallet password:                                 -> password
+          -> "account created: [<name> ]?[<id>]: N/A KRX" (auto-selects the new one)
+
+        IMPORTANT: additional bip32 accounts do NOT auto-restore from the wallet
+        mnemonic — recovery requires manually recreating accounts in order. The
+        CALLER (GUI) must warn the user before calling this.
+
+        Returns CliResult; .output holds the "account created..." line on success
+        (parse with parse_created_account).
+        """
+        name = (name or "").strip()
+        valid_types = {"bip32", "multisig", "legacy"}
+        if name and not re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", name):
+            return CliResult("account create", "", ok=False,
+                             error="Account name must be 1-64 chars: letters, "
+                                   "digits, underscore, hyphen (or empty).")
+        if acct_type not in valid_types:
+            return CliResult("account create", "", ok=False,
+                             error="Account type must be bip32, multisig, or legacy.")
+        if not password:
+            return CliResult("account create", "", ok=False,
+                             error="Wallet password is required to create an account.")
+
+        with self._lock:
+            if self._child is None or not self._child.isalive():
+                return CliResult("account create", "", ok=False,
+                                 error="CLI process is not running.")
+            cmd = f"account create {acct_type}"
+            self._flush_buffer()
+            self._submit_line(cmd)
+            # Answer the optional name prompt (empty = unnamed), then expect the
+            # password prompt.
+            try:
+                idx = self._child.expect(
+                    [self.ACCOUNT_NAME_PROMPT, self.PW_PROMPT, READY_PROMPT,
+                     pexpect.TIMEOUT, pexpect.EOF], timeout=timeout)
+            except Exception as e:  # noqa
+                return CliResult(cmd, "", ok=False, error=str(e))
+            if idx == 0:
+                self._submit_line(name)
+                try:
+                    idx = self._child.expect(
+                        [self.PW_PROMPT, READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
+                        timeout=timeout)
+                except Exception as e:  # noqa
+                    return CliResult(cmd, "", ok=False, error=str(e))
+            if idx != 0:
+                return CliResult(cmd, _ansi_strip(self._child.before or ""),
+                                 ok=False,
+                                 error="Did not get the password prompt for "
+                                       "account create. No account created.")
+            self._submit_line(password)
+            try:
+                self._child.expect([READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
+                                   timeout=timeout)
+            except Exception as e:  # noqa
+                return CliResult(cmd, "", ok=False, error=str(e))
+            output = _ansi_strip(self._child.before or "").strip()
+            low = output.lower()
+            if "unable to decrypt" in low or "incorrect" in low \
+                    or "wrong password" in low:
+                return CliResult(cmd, output, ok=False, error="Wrong password.")
+            if self.ACCOUNT_CREATED.search(output) or "account created" in low:
+                return CliResult(cmd, output, ok=True)
+            return CliResult(cmd, output, ok=False,
+                             error="Account creation could not be confirmed. "
+                                   "Check the account list.")
+
+    @staticmethod
+    def parse_created_account(output: str):
+        """Pull {'name','id'} from a successful create. dict or None."""
+        m = KeryxCliDriver.ACCOUNT_CREATED.search(output or "")
+        if not m:
+            return None
+        return {"name": m.group(1).strip(), "id": m.group(2)}
+
+    def rename_account(self, index: int, new_name: str, password: str,
+                       timeout: int = DEFAULT_TIMEOUT) -> CliResult:
+        """
+        Rename an account. VERIFIED flow (the CLI does NOT rename the currently
+        selected account — despite the help text — it prompts for which one):
+          account name <new_name>
+          -> Enter wallet password:            -> password
+          -> Please select account [0..N]:     -> index (account to rename)
+                                                  (a single-account wallet skips
+                                                   this and returns to ready)
+          -> renamed; `list` then shows the new name.
+
+        An EMPTY new_name CLEARS the account's name (sends `account name remove`),
+        leaving it shown by its id.
+
+        SECURITY: name is validated (letters/digits/_/-, 1-64) — the same charset
+        as wallet/account names — so a crafted value can't inject a command. A
+        non-empty literal "remove" is rejected (use an empty name to clear).
+        """
+        new_name = (new_name or "").strip()
+        # Empty name => clear the name via the CLI's `remove` keyword.
+        token = "remove" if not new_name else new_name
+        if new_name:
+            if new_name.lower() == "remove":
+                return CliResult("account name", "", ok=False,
+                                 error="To clear the name, leave it empty.")
+            if not re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", new_name):
+                return CliResult("account name", "", ok=False,
+                                 error="Account name must be 1-64 chars: letters, "
+                                       "digits, underscore, hyphen (or empty).")
+        if not isinstance(index, int) or index < 0:
+            return CliResult("account name", "", ok=False,
+                             error="Account index must be a non-negative integer.")
+        if not password:
+            return CliResult("account name", "", ok=False,
+                             error="Wallet password is required to rename.")
+
+        with self._lock:
+            if self._child is None or not self._child.isalive():
+                return CliResult("account name", "", ok=False,
+                                 error="CLI process is not running.")
+            cmd = f"account name {token}"
+            self._flush_buffer()
+            self._submit_line(cmd)
+            try:
+                idx = self._child.expect(
+                    [self.PW_PROMPT, READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
+                    timeout=timeout)
+            except Exception as e:  # noqa
+                return CliResult(cmd, "", ok=False, error=str(e))
+            if idx != 0:
+                return CliResult(cmd, _ansi_strip(self._child.before or ""),
+                                 ok=False,
+                                 error="Did not get the password prompt for "
+                                       "rename. Account NOT renamed.")
+            self._submit_line(password)
+            try:
+                idx2 = self._child.expect(
+                    [self.SELECT_PROMPT, READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
+                    timeout=timeout)
+            except Exception as e:  # noqa
+                return CliResult(cmd, "", ok=False, error=str(e))
+            if idx2 == 0:
+                # Numbered prompt: choose which account to rename.
+                self._submit_line(str(index))
+                try:
+                    self._child.expect(
+                        [READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF], timeout=timeout)
+                except pexpect.TIMEOUT:
+                    # Likely an out-of-range index → CLI re-prompts. Abort cleanly.
+                    self._submit_line("")
+                    self._wait_ready(timeout=5)
+                    return CliResult(cmd, "", ok=False,
+                                     error=f"Account index {index} not found.")
+                except Exception as e:  # noqa
+                    return CliResult(cmd, "", ok=False, error=str(e))
+                output = _ansi_strip(self._child.before or "")
+            elif idx2 == 1:
+                # Single-account wallet: no select prompt; already back at ready.
+                output = _ansi_strip(self._child.before or "")
+            else:
+                return CliResult(cmd, _ansi_strip(self._child.before or ""),
+                                 ok=False,
+                                 error="Rename did not complete (timed out or CLI "
+                                       "exited). Verify with the account list.")
+            low = output.lower()
+            if "unable to decrypt" in low or "incorrect" in low \
+                    or "wrong password" in low:
+                return CliResult(cmd, output.strip(), ok=False, error="Wrong password.")
+            if "not found" in low or "invalid" in low:
+                return CliResult(cmd, output.strip(), ok=False,
+                                 error=f"Account index {index} not found.")
+            return CliResult(cmd, output.strip(), ok=True)
+
+    def set_muted(self, muted: bool = True,
+                  timeout: int = DEFAULT_TIMEOUT) -> CliResult:
+        """
+        Ensure async notification output is muted (or not), idempotently.
+
+        Async balance/pending notifications streaming into the REPL between
+        commands are the #1 source of buffer desync. keryx-cli's `mute` command
+        is a TOGGLE with no status query — it prints the NEW state ("mute is on"
+        / "mute is off") — and the CLI starts MUTED. So a blind `mute` would
+        UNMUTE and cause the very desync we want to avoid.
+
+        We track the state (`self._muted`) and only toggle when the desired
+        state differs from the tracked one, re-syncing the tracked value from
+        the command's reported result. On a fresh process this is a no-op (it is
+        already muted), so we never leave an unmuted window.
+        """
+        with self._lock:
+            if self._child is None or not self._child.isalive():
+                return CliResult("mute", "", ok=False,
+                                 error="CLI process is not running.")
+            if self._muted == muted:
+                return CliResult("mute", f"mute is {'on' if muted else 'off'}",
+                                 ok=True)
+            self._flush_buffer()
+            self._submit_line("mute")
+            out = _ansi_strip(self._wait_ready(timeout=timeout))
+            low = out.lower()
+            if "mute is on" in low:
+                self._muted = True
+            elif "mute is off" in low:
+                self._muted = False
+            else:
+                return CliResult("mute", out.strip(), ok=False,
+                                 error="Could not read mute state.")
+            if self._muted == muted:
+                return CliResult("mute", out.strip(), ok=True)
+            # Toggle landed on the wrong state (tracked value was stale) — toggle
+            # once more to reach the requested state.
+            self._flush_buffer()
+            self._submit_line("mute")
+            out2 = _ansi_strip(self._wait_ready(timeout=timeout))
+            self._muted = "mute is on" in out2.lower()
+            ok = self._muted == muted
+            return CliResult("mute", out2.strip(), ok=ok,
+                             error=None if ok else "Could not set mute state.")
+
+    def select_account(self, index: int = 0,
+                       timeout: int = DEFAULT_TIMEOUT) -> CliResult:
+        """
+        Make an account the ACTIVE one, by its 0-based position in `list`.
+
+        keryx-cli will NOT spend (estimate / send / message sign) until an
+        account is actively selected, and the active account's UTXO context is
+        what those commands draw from. Crucially:
+          - With 2+ accounts, `wallet open` selects NOTHING — the prompt lacks
+            the "• [acct] •" segment and estimate/send return
+            "please select an account". This call fixes that.
+          - With a SINGLE account, `open` already auto-selects account 0; a bare
+            `select` then auto-selects again WITHOUT showing the numbered prompt.
+          - When the wallet was opened BEFORE connecting, even the auto-selected
+            account 0 can report "Insufficient funds" until re-selected, because
+            its UTXO context hasn't loaded. Re-selecting refreshes it.
+
+        Flow: send bare `select`. If the numbered prompt appears (2+ accounts),
+        answer with `index`; otherwise it already auto-selected and returned to
+        the ready prompt — sending the index would inject a stray command, so we
+        DON'T. This is why we expect [SELECT_PROMPT, READY_PROMPT] and branch.
+        """
+        if not isinstance(index, int) or index < 0:
+            return CliResult("select", "", ok=False,
+                             error="Account index must be a non-negative integer.")
+        with self._lock:
+            if self._child is None or not self._child.isalive():
+                return CliResult("select", "", ok=False,
+                                 error="CLI process is not running.")
+            self._flush_buffer()
+            self._submit_line("select")
+            try:
+                idx = self._child.expect(
+                    [self.SELECT_PROMPT, READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
+                    timeout=timeout,
+                )
+            except Exception as e:  # noqa
+                return CliResult("select", "", ok=False, error=str(e))
+
+            if idx == 0:
+                # Numbered prompt (2+ accounts): answer with the index, then wait
+                # for the ready prompt confirming the selection.
+                self._submit_line(str(index))
+                try:
+                    self._child.expect(
+                        [READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF], timeout=timeout)
+                except Exception as e:  # noqa
+                    return CliResult("select", "", ok=False, error=str(e))
+                output = _ansi_strip(self._child.before or "")
+                low = output.lower()
+                if "not found" in low or "invalid" in low:
+                    # Out-of-range index: the CLI re-prompts. Send a bare line to
+                    # abort the selection so the REPL returns to a clean prompt.
+                    self._submit_line("")
+                    self._wait_ready(timeout=5)
+                    return CliResult("select", output.strip(), ok=False,
+                                     error=f"Account index {index} not found.")
+                return CliResult("select", output.strip(), ok=True)
+            elif idx == 1:
+                # Single account: already auto-selected and back at the prompt.
+                return CliResult("select", _ansi_strip(self._child.before or "").strip(),
+                                 ok=True)
+            else:
+                return CliResult("select", _ansi_strip(self._child.before or ""),
+                                 ok=False,
+                                 error="select timed out or the CLI exited.")
 
     def export_mnemonic(self, password: str,
                         timeout: int = DEFAULT_TIMEOUT) -> CliResult:
@@ -856,170 +1142,7 @@ class KeryxCliDriver:
                 xpub = m.group(1)
         return {"xpub": xpub, "mnemonic": mnemonic}
 
-    # ── Account management ───────────────────────────────────────────────
-    # The interactive "select" prompt looks like:
-    #   "Please select account [0..3] or <enter> to abort:"
-    SELECT_PROMPT = re.compile(r"(?i)please select account \[0\.\.\d+\]")
-
-    @staticmethod
-    def parse_accounts(output: str):
-        """Parse the bullet-style `list` output into account dicts.
-
-        The `list` output looks like:
-            • 026c88596f0eee88
-                • [f802fb7e]: 20,867.98 KRX (...)  510 UTXOs
-                  keryx:qqfln...
-                • test1 [25032052]: 100 KRX   1 UTXOs
-                  keryx:qptpq...
-        The account ORDER is the select index (first=0, second=1, ...). Account 0
-        has no name (just an id); created accounts show "name [id]".
-
-        Returns a list of dicts: {index, name, id, balance, address}.
-        """
-        text = _ansi_strip(output or "")
-        accounts = []
-        # An account header line contains "[<hexid>]:" and a KRX balance. The
-        # next non-empty line that is a keryx: address belongs to that account.
-        acct_re = re.compile(
-            r"^\s*[•*-]?\s*(?:(?P<name>\S[^\[]*?)\s+)?\[(?P<id>[0-9a-fA-F]{6,16})\]:\s*"
-            r"(?P<bal>[\d,]+(?:\.\d+)?)\s*KRX", re.IGNORECASE)
-        addr_re = re.compile(r"(ker[xy][a-z]*:[0-9a-z]+)", re.IGNORECASE)
-        lines = text.splitlines()
-        idx = 0
-        for i, line in enumerate(lines):
-            m = acct_re.search(line)
-            if not m:
-                continue
-            name = (m.group("name") or "").strip()
-            acct_id = m.group("id")
-            bal = m.group("bal").replace(",", "")
-            # Look ahead a couple of lines for this account's address.
-            address = ""
-            for j in range(i + 1, min(i + 3, len(lines))):
-                am = addr_re.search(lines[j])
-                if am:
-                    address = am.group(1)
-                    break
-            accounts.append({
-                "index": idx, "name": name, "id": acct_id,
-                "balance": bal, "address": address,
-            })
-            idx += 1
-        return accounts
-
-    def list_accounts(self, timeout: int = DEFAULT_TIMEOUT):
-        """Run `list` and return parsed accounts. Requires an open wallet."""
-        res = self.run("list", timeout=timeout)
-        if not res.ok:
-            return res, []
-        return res, self.parse_accounts(res.output)
-
-    def mute_notifications(self, timeout: int = DEFAULT_TIMEOUT) -> CliResult:
-        """Toggle notification output off via `mute`. Async balance/pending
-        notifications stream into the REPL between commands and can desync the
-        buffer (a following command reads the leftover notification text). Muting
-        them keeps each command's output clean. Best-effort — if `mute` is
-        already off this may toggle it on, so callers should only invoke once at
-        startup."""
-        return self.run("mute", timeout=timeout)
-
-    def select_account(self, index: int, timeout: int = DEFAULT_TIMEOUT) -> CliResult:
-        """Select an account by its numeric index via the interactive prompt.
-        Note: `select <n>` as a single command does NOT work ("account 'n' not
-        found"); selection is only via the bare `select` + numbered prompt."""
-        with self._lock:
-            if self._child is None or not self._child.isalive():
-                return CliResult("select", "", ok=False,
-                                 error="CLI process is not running.")
-            self._flush_buffer(settle=0.12)
-            self._submit_line("select")
-            try:
-                idx = self._child.expect(
-                    [self.SELECT_PROMPT, READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
-                    timeout=timeout)
-            except Exception as e:  # noqa
-                return CliResult("select", "", ok=False, error=str(e))
-            if idx != 0:
-                before = _ansi_strip(self._child.before or "")
-                return CliResult("select", before, ok=False,
-                                 error="Did not get the account selection prompt.")
-            # Answer the prompt with the index.
-            self._submit_line(str(int(index)))
-            try:
-                self._child.expect([READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
-                                   timeout=timeout)
-            except Exception as e:  # noqa
-                return CliResult("select", "", ok=False, error=str(e))
-            output = _ansi_strip(self._child.before or "")
-            # Absorb any async balance/notification output that streams in right
-            # after the selection, so the NEXT command (address/list/history)
-            # reads its own output and not this leftover.
-            self._flush_buffer(settle=0.2)
-            low = output.lower()
-            # The CLI confirms a successful selection with "selecting account:".
-            # NOTE: do NOT check for the word "abort" — the selection prompt
-            # itself contains "or <enter> to abort:", which would false-trigger.
-            if "selecting account" in low:
-                return CliResult("select", output.strip(), ok=True)
-            if "not found" in low:
-                return CliResult("select", output.strip(), ok=False,
-                                 error="Account selection failed.")
-            # If we didn't see an explicit confirmation, assume it worked rather
-            # than false-failing (the confirmation line may have scrolled past).
-            return CliResult("select", output.strip(), ok=True)
-
-    def create_account(self, name: str, password: str,
-                       acct_type: str = "bip32",
-                       timeout: int = DEFAULT_TIMEOUT) -> CliResult:
-        """Create a new account: `account create <type> <name>` then answer the
-        wallet password prompt. Verified flow:
-            account create bip32 myname
-            -> Enter wallet password:
-            -> "account created: myname [id]: N/A KRX"
-        """
-        name = (name or "").strip()
-        if not re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", name):
-            return CliResult("account create", "", ok=False,
-                             error="Invalid account name (letters, digits, _ - only).")
-        if acct_type not in ("bip32", "multisig", "legacy"):
-            acct_type = "bip32"
-        with self._lock:
-            if self._child is None or not self._child.isalive():
-                return CliResult("account create", "", ok=False,
-                                 error="CLI process is not running.")
-            cmd = f"account create {acct_type} {name}"
-            self._flush_buffer()
-            self._submit_line(cmd)
-            try:
-                idx = self._child.expect(
-                    [self.PW_PROMPT, READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
-                    timeout=timeout)
-            except Exception as e:  # noqa
-                return CliResult(cmd, "", ok=False, error=str(e))
-            if idx != 0:
-                before = _ansi_strip(self._child.before or "")
-                # No password prompt — possibly created without one, or errored.
-                if "account created" in before.lower():
-                    return CliResult(cmd, before.strip(), ok=True)
-                return CliResult(cmd, before, ok=False,
-                                 error="Did not get the password prompt for "
-                                       "account create.")
-            self._submit_line(password)
-            try:
-                self._child.expect([READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
-                                   timeout=timeout)
-            except Exception as e:  # noqa
-                return CliResult(cmd, "", ok=False, error=str(e))
-            output = _ansi_strip(self._child.before or "")
-            low = output.lower()
-            if "account created" in low:
-                return CliResult(cmd, output.strip(), ok=True)
-            if "unable to decrypt" in low or "incorrect" in low:
-                return CliResult(cmd, output.strip(), ok=False,
-                                 error="Wrong password.")
-            return CliResult(cmd, output.strip(), ok=False,
-                             error="Account creation did not confirm.")
-
+    # Sweep/consolidate result line:
     #   "Sweep: Fees: <fee> UTXOs: <count> Batch Transactions: <batches>"
     SWEEP_RESULT = re.compile(
         r"(?i)sweep:\s*fees:\s*([\d.]+).*?utxos:\s*(\d+).*?"
@@ -1182,6 +1305,59 @@ class KeryxCliDriver:
     def parse_send_result(output: str):
         """Parse the 'Send - Amount/Fees/Total/UTXOs' line. Returns dict or None."""
         m = KeryxCliDriver.SEND_RESULT.search(output or "")
+        if not m:
+            return None
+        return {
+            "amount": m.group(1),
+            "fees": m.group(2),
+            "total": m.group(3),
+            "utxos": int(m.group(4)),
+        }
+
+    # `estimate` output line: "Estimate - Amount: 1 KRX  Fees: 0.6 KRX  Total: 1.6 KRX  UTXOs: 1"
+    ESTIMATE_RESULT = re.compile(
+        r"Estimate\s*-\s*Amount:\s*([\d.]+)\s*KRX\s+"
+        r"Fees:\s*([\d.]+)\s*KRX\s+"
+        r"Total:\s*([\d.]+)\s*KRX\s+"
+        r"UTXOs:\s*(\d+)",
+        re.IGNORECASE,
+    )
+
+    def estimate(self, amount: str, priority_fee: str = "",
+                 timeout: int = DEFAULT_TIMEOUT) -> CliResult:
+        """
+        Estimate the fee/total for a send WITHOUT broadcasting. Non-interactive:
+          estimate <amount> [<priority_fee>]
+          -> "Estimate - Amount: A KRX  Fees: F KRX  Total: T KRX  UTXOs: N"
+             or "Insufficient funds"
+        Requires an account selected and a node connection (same as `send`).
+
+        Returns CliResult; .output holds the Estimate line on success (parse with
+        parse_estimate_result). On "Insufficient funds" returns ok=False.
+        """
+        amount = str(amount).strip()
+        priority_fee = str(priority_fee).strip()
+        if not re.fullmatch(r"\d+(\.\d+)?", amount):
+            return CliResult("estimate", "", ok=False,
+                             error="Amount must be a positive number.")
+        cmd = f"estimate {amount}"
+        if priority_fee and re.fullmatch(r"\d+(\.\d+)?", priority_fee):
+            cmd += f" {priority_fee}"
+        res = self.run(cmd, timeout=timeout)
+        out = res.output or ""
+        if res.ok and self.ESTIMATE_RESULT.search(out):
+            return CliResult(cmd, out, ok=True)
+        if "insufficient" in out.lower():
+            return CliResult(cmd, out, ok=False, error="Insufficient funds.")
+        # Couldn't confirm an estimate; surface what we got (caller treats a
+        # non-ok estimate as "unavailable" and proceeds without it).
+        return CliResult(cmd, out, ok=False,
+                         error=res.error or "Estimate unavailable.")
+
+    @staticmethod
+    def parse_estimate_result(output: str):
+        """Parse the 'Estimate - Amount/Fees/Total/UTXOs' line. dict or None."""
+        m = KeryxCliDriver.ESTIMATE_RESULT.search(output or "")
         if not m:
             return None
         return {

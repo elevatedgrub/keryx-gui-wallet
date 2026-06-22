@@ -176,14 +176,15 @@ def get_password(parent, title: str, prompt: str):
     return "", False
 
 
-def get_text(parent, title: str, prompt: str):
-    """Themed single-line text input (visible, not masked). The prompt is the
-    green heading. Returns (text, ok)."""
+def get_text(parent, title: str, prompt: str, initial: str = ""):
+    """Themed single-line text input (visible echo). The prompt is the green
+    heading. Pre-fills `initial` and selects it. Returns (text, ok)."""
     dlg = QDialog(parent)
     _frame(dlg, title)
     v = QVBoxLayout(dlg)
     v.addWidget(_title_label(prompt, TOKENS["green"]))
     field = QLineEdit()
+    field.setText(initial)
     field.setStyleSheet(
         f"QLineEdit {{ background:{TOKENS['surface_2']}; color:{TOKENS['text']}; "
         f"border:1px solid {TOKENS['border']}; border-radius:6px; padding:7px 9px; "
@@ -199,8 +200,9 @@ def get_text(parent, title: str, prompt: str):
     row.addWidget(cancel); row.addWidget(okb)
     v.addLayout(row)
     field.setFocus()
+    field.selectAll()
     if dlg.exec() == QDialog.DialogCode.Accepted:
-        return field.text(), True
+        return field.text().strip(), True
     return "", False
 
 

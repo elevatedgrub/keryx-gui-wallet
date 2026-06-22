@@ -102,6 +102,86 @@ _T = {
         "id": "Ganti dompet", "ko": "지갑 전환", "es": "Cambiar cartera",
         "nl": "Wissel portemonnee",
     },
+    "account": {
+        "en": "Account", "ru": "Счёт", "zh": "账户", "id": "Akun",
+        "ko": "계정", "es": "Cuenta", "nl": "Account",
+    },
+    "rename": {
+        "en": "Rename", "ru": "Переименовать", "zh": "重命名", "id": "Ganti nama",
+        "ko": "이름 변경", "es": "Renombrar", "nl": "Hernoemen",
+    },
+    "new_account": {
+        "en": "New account", "ru": "Новый счёт", "zh": "新建账户",
+        "id": "Akun baru", "ko": "새 계정", "es": "Nueva cuenta",
+        "nl": "Nieuw account",
+    },
+    "reorder_hint": {
+        "en": "Drag accounts to reorder", "ru": "Перетащите счета для порядка",
+        "zh": "拖动账户以重新排序", "id": "Seret akun untuk mengurutkan",
+        "ko": "계정을 끌어 순서 변경", "es": "Arrastra las cuentas para reordenar",
+        "nl": "Sleep accounts om te herschikken",
+    },
+    "estimating": {
+        "en": "Estimating fee", "ru": "Расчёт комиссии", "zh": "正在估算手续费",
+        "id": "Memperkirakan biaya", "ko": "수수료 추정 중",
+        "es": "Estimando comisión", "nl": "Kosten schatten",
+    },
+    "account_name_prompt": {
+        "en": "Account name", "ru": "Имя счёта", "zh": "账户名称",
+        "id": "Nama akun", "ko": "계정 이름", "es": "Nombre de cuenta",
+        "nl": "Accountnaam",
+    },
+    "account_recovery_warning": {
+        "en": "Additional accounts do NOT auto-restore from your recovery "
+              "phrase. To recover them you must recreate each account in the "
+              "same order. Keep important funds in the main account. Continue?",
+        "ru": "Дополнительные счета НЕ восстанавливаются автоматически из "
+              "вашей фразы. Чтобы восстановить их, нужно заново создать каждый "
+              "счёт в том же порядке. Храните важные средства на основном "
+              "счёте. Продолжить?",
+        "zh": "附加账户不会从助记词自动恢复。要恢复它们，您必须按相同顺序"
+              "重新创建每个账户。请将重要资金保留在主账户中。是否继续？",
+        "id": "Akun tambahan TIDAK dipulihkan otomatis dari frasa pemulihan "
+              "Anda. Untuk memulihkannya, buat ulang setiap akun dengan urutan "
+              "yang sama. Simpan dana penting di akun utama. Lanjutkan?",
+        "ko": "추가 계정은 복구 문구로 자동 복원되지 않습니다. 복구하려면 "
+              "동일한 순서로 각 계정을 다시 만들어야 합니다. 중요한 자금은 "
+              "메인 계정에 보관하세요. 계속할까요?",
+        "es": "Las cuentas adicionales NO se restauran automáticamente desde tu "
+              "frase de recuperación. Para recuperarlas debes recrear cada "
+              "cuenta en el mismo orden. Mantén los fondos importantes en la "
+              "cuenta principal. ¿Continuar?",
+        "nl": "Extra accounts worden NIET automatisch hersteld vanuit je "
+              "herstelzin. Om ze te herstellen moet je elk account in dezelfde "
+              "volgorde opnieuw aanmaken. Houd belangrijke tegoeden op het "
+              "hoofdaccount. Doorgaan?",
+    },
+    "account_created": {
+        "en": "Account created", "ru": "Счёт создан", "zh": "账户已创建",
+        "id": "Akun dibuat", "ko": "계정이 생성됨", "es": "Cuenta creada",
+        "nl": "Account aangemaakt",
+    },
+    "create_account_failed": {
+        "en": "Could not create account", "ru": "Не удалось создать счёт",
+        "zh": "无法创建账户", "id": "Gagal membuat akun",
+        "ko": "계정을 만들 수 없음", "es": "No se pudo crear la cuenta",
+        "nl": "Kon account niet aanmaken",
+    },
+    "rename_prompt": {
+        "en": "New account name", "ru": "Новое имя счёта",
+        "zh": "新账户名称", "id": "Nama akun baru", "ko": "새 계정 이름",
+        "es": "Nuevo nombre de cuenta", "nl": "Nieuwe accountnaam",
+    },
+    "account_renamed": {
+        "en": "Account renamed", "ru": "Счёт переименован", "zh": "账户已重命名",
+        "id": "Akun diganti namanya", "ko": "계정 이름이 변경됨",
+        "es": "Cuenta renombrada", "nl": "Account hernoemd",
+    },
+    "rename_failed": {
+        "en": "Rename failed", "ru": "Не удалось переименовать",
+        "zh": "重命名失败", "id": "Gagal mengganti nama", "ko": "이름 변경 실패",
+        "es": "Error al renombrar", "nl": "Hernoemen mislukt",
+    },
     "consolidate": {
         "en": "Consolidate", "ru": "Объединить", "zh": "整合", "id": "Konsolidasi",
         "ko": "통합", "es": "Consolidar", "nl": "Consolideren",
@@ -729,55 +809,6 @@ _T = {
         "en": "amount (KRX)", "ru": "сумма (KRX)", "zh": "金额 (KRX)",
         "id": "jumlah (KRX)", "ko": "금액 (KRX)", "es": "cantidad (KRX)",
         "nl": "bedrag (KRX)",
-    },
-    "account": {
-        "en": "Account", "ru": "Счёт", "zh": "账户", "id": "Akun",
-        "ko": "계정", "es": "Cuenta", "nl": "Account",
-    },
-    "new_account": {
-        "en": "New account", "ru": "Новый счёт", "zh": "新建账户",
-        "id": "Akun baru", "ko": "새 계정", "es": "Nueva cuenta",
-        "nl": "Nieuw account",
-    },
-    "new_account_tip": {
-        "en": "Create another account in this wallet (derived from the same recovery phrase)",
-        "ru": "Создать ещё один счёт в этом кошельке (производный от той же фразы восстановления)",
-        "zh": "在此钱包中创建另一个账户（由同一助记词派生）",
-        "id": "Buat akun lain di dompet ini (berasal dari frasa pemulihan yang sama)",
-        "ko": "이 지갑에 다른 계정 생성 (동일한 복구 구문에서 파생됨)",
-        "es": "Crear otra cuenta en esta cartera (derivada de la misma frase de recuperación)",
-        "nl": "Maak nog een account in deze portemonnee (afgeleid van dezelfde herstelzin)",
-    },
-    "main_account": {
-        "en": "Main account", "ru": "Основной счёт", "zh": "主账户",
-        "id": "Akun utama", "ko": "기본 계정", "es": "Cuenta principal",
-        "nl": "Hoofdaccount",
-    },
-    "account_name_prompt": {
-        "en": "Name for the new account:", "ru": "Имя нового счёта:",
-        "zh": "新账户的名称：", "id": "Nama untuk akun baru:",
-        "ko": "새 계정 이름:", "es": "Nombre de la nueva cuenta:",
-        "nl": "Naam voor het nieuwe account:",
-    },
-    "account_recovery_warning": {
-        "en": "Accounts are derived in order from your recovery phrase. Additional accounts do NOT restore automatically when you import the phrase on another wallet — you must recreate them in the same order to recover their funds. For the simplest, safest recovery, keep your funds in the main account. Continue?",
-        "ru": "Счета создаются по порядку из вашей фразы восстановления. Дополнительные счета НЕ восстанавливаются автоматически при импорте фразы в другой кошелёк — для восстановления средств нужно воссоздать их в том же порядке. Для простого и надёжного восстановления храните средства на основном счёте. Продолжить?",
-        "zh": "账户按顺序从您的助记词派生。在其他钱包导入助记词时，额外账户不会自动恢复——您必须按相同顺序重新创建才能恢复其资金。为了最简单、最安全的恢复，请将资金保留在主账户中。是否继续？",
-        "id": "Akun diturunkan secara berurutan dari frasa pemulihan Anda. Akun tambahan TIDAK dipulihkan otomatis saat Anda mengimpor frasa di dompet lain — Anda harus membuatnya kembali dalam urutan yang sama untuk memulihkan dananya. Untuk pemulihan paling sederhana dan aman, simpan dana Anda di akun utama. Lanjutkan?",
-        "ko": "계정은 복구 구문에서 순서대로 파생됩니다. 추가 계정은 다른 지갑에서 구문을 가져올 때 자동으로 복구되지 않습니다 — 자금을 복구하려면 동일한 순서로 다시 만들어야 합니다. 가장 간단하고 안전한 복구를 위해 자금을 기본 계정에 보관하세요. 계속하시겠습니까?",
-        "es": "Las cuentas se derivan en orden de su frase de recuperación. Las cuentas adicionales NO se restauran automáticamente al importar la frase en otra cartera — debe recrearlas en el mismo orden para recuperar sus fondos. Para la recuperación más sencilla y segura, mantenga sus fondos en la cuenta principal. ¿Continuar?",
-        "nl": "Accounts worden in volgorde afgeleid van uw herstelzin. Extra accounts worden NIET automatisch hersteld wanneer u de zin in een andere portemonnee importeert — u moet ze in dezelfde volgorde opnieuw aanmaken om hun saldo te herstellen. Voor het eenvoudigste, veiligste herstel houdt u uw geld op het hoofdaccount. Doorgaan?",
-    },
-    "account_created": {
-        "en": "Account \"{name}\" created.", "ru": "Счёт «{name}» создан.",
-        "zh": "已创建账户“{name}”。", "id": "Akun \"{name}\" dibuat.",
-        "ko": "계정 \"{name}\"이(가) 생성되었습니다.",
-        "es": "Cuenta \"{name}\" creada.", "nl": "Account \"{name}\" aangemaakt.",
-    },
-    "connecting": {
-        "en": "Connecting…", "ru": "Подключение…", "zh": "正在连接…",
-        "id": "Menghubungkan…", "ko": "연결 중…", "es": "Conectando…",
-        "nl": "Verbinden…",
     },
     "connected": {
         "en": "Connected", "ru": "Подключено", "zh": "已连接",
