@@ -50,6 +50,13 @@ def _dbg(msg: str) -> None:
         pass
 
 
+def _natural_key(s: str):
+    """Sort key so names sort 'naturally': test2 < test9 < test10 < test20
+    (not lexicographic test1, test10, test2)."""
+    return [int(t) if t.isdigit() else t.lower()
+            for t in re.split(r"(\d+)", s or "")]
+
+
 def _asset_path(name: str) -> str:
     """Locate a bundled asset both from source and from a PyInstaller bundle."""
     candidates = []
@@ -102,6 +109,7 @@ class MainWindow(QMainWindow):
         self._accounts = []             # parsed accounts from `list` (live keryx order)
         self._account_combo_ids = []    # display-ordered ids in the switcher (rebuild guard)
         self._populating_accounts = False  # guards combo programmatic updates
+        self._max_mode = False          # "Max" active → amount auto-tracks the fee
         self._current_address = ""
         self._krx_price = None          # cached KRX/USDT price
         self._last_list_output = ""     # cached `list` output for re-rendering
@@ -110,9 +118,19 @@ class MainWindow(QMainWindow):
         self._explorer_txs = None       # cached explorer txs (address-sourced)
         self._tx_page = 0               # current transactions page (0-based)
 
+        # Clear a button's stuck :hover after it opens a dialog (the dialog steals
+        # the mouse-leave, so the button stays highlighted). App-wide filter.
+        from PyQt6.QtWidgets import QApplication as _QApp
+        _QApp.instance().installEventFilter(self)
+
         self._balance_timer = QTimer(self)
         self._balance_timer.setInterval(10_000)
         self._balance_timer.timeout.connect(self._auto_refresh_balance)
+        # Debounce for re-computing the Max amount when the priority fee changes.
+        self._max_recalc = QTimer(self)
+        self._max_recalc.setSingleShot(True)
+        self._max_recalc.setInterval(350)
+        self._max_recalc.timeout.connect(self._fill_max_amount)
 
         self.stack = QStackedWidget()
 
@@ -459,10 +477,11 @@ class MainWindow(QMainWindow):
         wdir = os.path.expanduser("~/.keryx-labs")
         names = []
         try:
-            for path in sorted(glob.glob(os.path.join(wdir, "*.wallet"))):
+            for path in glob.glob(os.path.join(wdir, "*.wallet")):
                 names.append(os.path.splitext(os.path.basename(path))[0])
         except Exception:
             pass
+        names.sort(key=_natural_key)   # test2 < test9 < test10 (not lexicographic)
         self.open_combo.addItems(names)
         if prev:
             self.open_combo.setCurrentText(prev)
@@ -567,9 +586,9 @@ class MainWindow(QMainWindow):
         if self._wallet_exists(vals["name"]):
             dialogs._warn(self, _t("wallet_name_exists"), "")
             return
-
         def done(res: CliResult):
             if res.ok:
+                self.create_name.clear()   # don't leave the name in the field
                 parsed = KeryxCliDriver.parse_create_result(res.output)
                 MnemonicBackupDialog(parsed.get("mnemonic", ""),
                                      parsed.get("address", ""), parent=self).exec()
@@ -610,6 +629,7 @@ class MainWindow(QMainWindow):
 
         def done(res: CliResult):
             if res.ok:
+                self.import_name.clear()   # don't leave the name in the field
                 self.status(f'Wallet "{vals["name"]}" imported.')
                 self._auto_open_after(vals["name"], vals["password"])
             else:
@@ -750,6 +770,20 @@ class MainWindow(QMainWindow):
         self.send_addr.focusOutEvent = _focus_out
         self.send_amount = QLineEdit(); self.send_amount.setPlaceholderText(_t("ph_amount"))
         self.send_fee = QLineEdit(); self.send_fee.setPlaceholderText(_t("ph_priority_fee"))
+        # Keryx amounts are capped at 8 decimal places (1 KRX = 1e8 sompi).
+        from PyQt6.QtGui import QRegularExpressionValidator
+        from PyQt6.QtCore import QRegularExpression
+        _amt_validator = QRegularExpressionValidator(
+            QRegularExpression(r"^\d*(\.\d{0,8})?$"))
+        self.send_amount.setValidator(_amt_validator)
+        self.send_fee.setValidator(_amt_validator)
+        # Manually editing the amount exits "Max mode"; changing the priority fee
+        # while in Max mode re-computes the amount (debounced) so it stays = the
+        # full balance minus the (now larger) fee.
+        self.send_amount.textEdited.connect(
+            lambda _t: setattr(self, "_max_mode", False))
+        self.send_fee.textChanged.connect(
+            lambda _t: self._max_recalc.start() if self._max_mode else None)
         # Destination row: address field + an address-book button to its right.
         to_row = QWidget()
         to_h = QHBoxLayout(to_row)
@@ -780,7 +814,16 @@ class MainWindow(QMainWindow):
         self.addrbook_btn.clicked.connect(self._open_address_book)
         to_h.addWidget(self.addrbook_btn)
         sb.addRow(_t("to"), to_row)
-        sb.addRow(_t("amount"), self.send_amount)
+        # Amount row + a "Max" button that fills in balance minus the real fee.
+        amt_row = QWidget(); amt_h = QHBoxLayout(amt_row)
+        amt_h.setContentsMargins(0, 0, 0, 0); amt_h.setSpacing(6)
+        amt_h.addWidget(self.send_amount, 1)
+        self.max_btn = QPushButton(_t("max"))
+        self.max_btn.setFixedWidth(56)
+        self.max_btn.setToolTip(_t("max_tip"))
+        self.max_btn.clicked.connect(self._fill_max_amount)
+        amt_h.addWidget(self.max_btn)
+        sb.addRow(_t("amount"), amt_row)
         sb.addRow(_t("fee"), self.send_fee)
         send_btn = QPushButton(_t("send_btn"))
         send_btn.clicked.connect(self._do_send)
@@ -969,6 +1012,57 @@ class MainWindow(QMainWindow):
         config.set_order_locked(self._wallet_id, True)
         self._account_combo_ids = ids
 
+    # ── BIP39 passphrase ("payment secret") plumbing ──────────────────────────
+    @staticmethod
+    def _payment_needed(res) -> bool:
+        """True if a driver op failed because the wallet wants its BIP39
+        passphrase (the 'Enter payment password' prompt)."""
+        blob = ((getattr(res, "error", "") or "") + " "
+                + (getattr(res, "output", "") or "")).lower()
+        return ("payment secret is required" in blob
+                or "enter payment password" in blob)
+
+    def _ask_passphrase(self):
+        pp, ok = dialogs.get_password(
+            self, _t("bip39_passphrase"), _t("enter_passphrase_prompt"))
+        return pp if ok else None
+
+    def _run_payment_op(self, op_fn, base_args, on_result, on_cancel=None):
+        """Run a payment-secret-capable driver op (send/sweep/create_account).
+        `base_args` is the positional args BEFORE payment_secret. For a known
+        passphrase wallet we ask upfront; otherwise we try without, and if the
+        CLI asks for the payment password we record it, prompt, and retry. Normal
+        wallets are never asked."""
+        from keryx_wallet.core import config
+
+        def run(secret):
+            def cb(res):
+                def handle():
+                    if (not getattr(res, "ok", False)) and self._payment_needed(res):
+                        if self._wallet_id:
+                            config.set_has_passphrase(self._wallet_id, True)
+                        pp = self._ask_passphrase()
+                        if pp is None:
+                            if on_cancel:
+                                on_cancel()
+                            return
+                        run(pp)
+                        return
+                    on_result(res)
+                # Defer so any just-closed modal is gone before we open another.
+                QTimer.singleShot(0, handle)
+            self._submit(op_fn, cb, *base_args, secret)
+
+        if self._wallet_id and config.get_has_passphrase(self._wallet_id):
+            pp = self._ask_passphrase()
+            if pp is None:
+                if on_cancel:
+                    on_cancel()
+                return
+            run(pp)
+        else:
+            run("")
+
     def _do_new_account(self):
         if not self._wallet_open:
             return
@@ -1004,7 +1098,9 @@ class MainWindow(QMainWindow):
                 self.status(_t("create_account_failed"))
 
         self.status(_t("new_account") + "…")
-        self._submit(self.driver.create_account, done, name, pw)
+        # create_account signature: (name, password, acct_type, payment_secret).
+        self._run_payment_op(self.driver.create_account, (name, pw, "bip32"),
+                             done, on_cancel=lambda: self.status(""))
 
     def _do_rename_account(self):
         idx = self._selected_account_index
@@ -1127,6 +1223,34 @@ class MainWindow(QMainWindow):
         self._submit(self.driver.run, done, "list")
         self._refresh_price()
         self._load_history()
+
+    def eventFilter(self, obj, event):
+        from PyQt6.QtCore import QEvent
+        from PyQt6.QtWidgets import QPushButton
+        if (event.type() == QEvent.Type.MouseButtonRelease
+                and isinstance(obj, QPushButton)):
+            # After this click (which may open a modal dialog), check on the next
+            # event-loop turn whether the cursor actually left the button; if so,
+            # clear the stuck :hover. The timer fires even inside a modal's loop.
+            QTimer.singleShot(0, lambda b=obj: self._clear_stuck_hover(b))
+        return super().eventFilter(obj, event)
+
+    @staticmethod
+    def _clear_stuck_hover(btn):
+        # If a modal dialog is open now, this click opened it and the button
+        # missed its mouse-leave (it stays green). Clear the hover regardless of
+        # the cursor position — the cursor check is unreliable on Wayland, where
+        # the dialog opens top-left rather than over the button.
+        from PyQt6.QtCore import QEvent
+        from PyQt6.QtWidgets import QApplication
+        try:
+            if btn is None or QApplication.activeModalWidget() is None:
+                return
+            btn.setAttribute(Qt.WidgetAttribute.WA_UnderMouse, False)
+            QApplication.sendEvent(btn, QEvent(QEvent.Type.Leave))
+            btn.update()
+        except Exception:
+            pass
 
     def _fit_address_font(self, w):
         # No longer used — the address now wraps in a QTextEdit instead of
@@ -1701,49 +1825,66 @@ class MainWindow(QMainWindow):
                 return
             pw = dlg.password()
 
-            def sent(res: CliResult):
-                def show_result():
-                    try:
-                        if getattr(res, "ok", False):
-                            parsed = KeryxCliDriver.parse_send_result(
-                                getattr(res, "output", "")) or {}
-                            if parsed:
-                                dialogs._info(
-                                    self, _t("sent"),
-                                    f"{_t('amount')} {parsed.get('amount','?')} KRX\n"
-                                    f"{_t('fee')} {parsed.get('fees','?')} KRX\n"
-                                    f"{_t('total')} {parsed.get('total','?')} KRX")
-                            else:
-                                dialogs._info(self, _t("sent"),
-                                              getattr(res, "output", "") or "")
-                            self.send_addr.clear()
-                            self.send_amount.clear()
-                            self.send_fee.clear()
-                            self._refresh_accounts()
-                            self._load_history()
+            def on_result(res):
+                # _run_payment_op already deferred this via singleShot, so it's
+                # safe to open modals here.
+                try:
+                    if getattr(res, "ok", False):
+                        parsed = KeryxCliDriver.parse_send_result(
+                            getattr(res, "output", "")) or {}
+                        if parsed:
+                            dialogs._info(
+                                self, _t("sent"),
+                                f"{_t('amount')} {parsed.get('amount','?')} KRX\n"
+                                f"{_t('fee')} {parsed.get('fees','?')} KRX\n"
+                                f"{_t('total')} {parsed.get('total','?')} KRX")
+                        else:
+                            dialogs._info(self, _t("sent"),
+                                          getattr(res, "output", "") or "")
+                        self.send_addr.clear()
+                        self.send_amount.clear()
+                        self.send_fee.clear()
+                        self._max_mode = False
+                        self._refresh_accounts()
+                        self._load_history()
+                    else:
+                        blob = ((getattr(res, "error", "") or "") + " "
+                                + (getattr(res, "output", "") or "")).lower()
+                        if "insufficient" in blob:
+                            dialogs._warn(self, _t("insufficient_funds"),
+                                          _t("insufficient_amount_fee"))
                         else:
                             dialogs._error(
                                 self, _t("send_uncertain"),
                                 (getattr(res, "error", "") or "") + "\n\n" +
                                 (getattr(res, "output", "") or ""))
-                    except Exception as e:
-                        try:
-                            dialogs._info(self, _t("sent"), str(e))
-                        except Exception:
-                            pass
-                # Defer to the next event-loop turn so the (now-closing) send
-                # confirm dialog is fully torn down before we open another modal
-                # — opening a modal from within a closing modal's accept() chain
-                # can hard-crash Qt on some platforms.
-                QTimer.singleShot(0, show_result)
+                except Exception as e:
+                    try:
+                        dialogs._info(self, _t("sent"), str(e))
+                    except Exception:
+                        pass
             self.status("Broadcasting…")
-            self._submit(self.driver.send, sent, addr, amount, fee, pw)
+            # Handles the BIP39 "payment password" prompt for passphrase wallets.
+            self._run_payment_op(self.driver.send, (addr, amount, fee, pw),
+                                 on_result,
+                                 on_cancel=lambda: self.status("Send cancelled."))
 
         def after_estimate(res):
             est = None
             try:
                 if res and getattr(res, "ok", False):
                     est = KeryxCliDriver.parse_estimate_result(res.output)
+                elif res:
+                    blob = ((getattr(res, "error", "") or "") + " "
+                            + (getattr(res, "output", "") or "")).lower()
+                    if "insufficient" in blob:
+                        # The amount + network fee exceeds the balance — tell the
+                        # user about the fee explicitly (the bare amount may look
+                        # affordable, e.g. sending all 20 of a 20 KRX balance).
+                        dialogs._warn(self, _t("insufficient_funds"),
+                                      _t("insufficient_amount_fee"))
+                        self.status("")
+                        return
             except Exception:
                 est = None
             show_dialog(est)
@@ -1753,6 +1894,76 @@ class MainWindow(QMainWindow):
         # unavailable, after_estimate falls back to showing the dialog without it.
         self.status(_t("estimating") + "…")
         self._submit(self.driver.estimate, after_estimate, amount, fee)
+
+    def _fill_max_amount(self):
+        """Fill the amount with the precise maximum = balance − real network fee.
+        The fee is dynamic (depends on how many UTXOs are spent), so we estimate
+        it for a near-full send and subtract it."""
+        bal = getattr(self, "_balance_krx", None)
+        if not isinstance(bal, (int, float)) or bal <= 0:
+            dialogs._warn(self, _t("insufficient_funds"), "")
+            return
+        fee_field = self.send_fee.text().strip()
+        pf = fee_field if re.fullmatch(r"\d+(\.\d+)?", fee_field or "") else "0"
+        # Probe to learn the fee. Leave a FIXED ~2 KRX gross buffer (not a
+        # percentage): a percentage buffer lands in the dust zone when it's near
+        # the fee (e.g. 2% of 33 KRX ≈ 0.66 ≈ the 0.6 fee → ~0.06 dust change →
+        # "Mass calculation error"). A ~2 KRX buffer leaves safe change while
+        # still spending (near) all UTXOs.
+        probe = (bal - 2.0) if bal > 2.0 else bal * 0.5
+        probe_s = f"{probe:.8f}".rstrip("0").rstrip(".")
+
+        def fmt(sompi):
+            return f"{sompi / 1e8:.8f}".rstrip("0").rstrip(".")
+
+        def set_amount(sompi):
+            self.send_amount.setText(fmt(sompi))
+            self._max_mode = True   # keep amount tracking the fee as it changes
+            self.status("")
+
+        def done(res):
+            est = (KeryxCliDriver.parse_estimate_result(getattr(res, "output", "") or "")
+                   if getattr(res, "ok", False) else None)
+            if not est:
+                self.status("")
+                dialogs._warn(self, _t("estimate_unavailable"), "")
+                return
+            try:
+                fee_val = float(est.get("fees", "0"))
+            except Exception:
+                fee_val = 0.0
+            # Integer sompi so there's no float drift (1 KRX = 1e8 sompi).
+            exact_sompi = round(bal * 1e8) - round(fee_val * 1e8)
+            if exact_sompi <= 0:
+                dialogs._warn(self, _t("insufficient_funds"),
+                              _t("insufficient_amount_fee"))
+                return
+            # Try the EXACT full drain (zero change). It only works when balance −
+            # fee is a value keryx-cli's float-based amount parser can represent;
+            # for "ugly" 8-decimal balances it can't (off by ~1 sompi → dust). So
+            # we verify with an estimate and, if it won't drain cleanly, fall back
+            # to leaving a small safe change (0.2 KRX, well above the dust limit).
+            def after_verify(res2):
+                ok = (getattr(res2, "ok", False)
+                      and KeryxCliDriver.parse_estimate_result(
+                          getattr(res2, "output", "") or "") is not None)
+                if ok:
+                    set_amount(exact_sompi)          # full drain
+                else:
+                    # Exact drain isn't representable for this balance/fee. A
+                    # change output must clear the storage-mass minimum (~0.15 KRX
+                    # verified — 0.1 fails), so leave 0.2 KRX for margin.
+                    safe = exact_sompi - 20_000_000  # leave 0.2 KRX change
+                    if safe <= 0:
+                        dialogs._warn(self, _t("insufficient_funds"),
+                                      _t("insufficient_amount_fee"))
+                        self.status("")
+                        return
+                    set_amount(safe)
+            self._submit(self.driver.estimate, after_verify, fmt(exact_sompi), pf)
+
+        self.status(_t("estimating") + "…")
+        self._submit(self.driver.estimate, done, probe_s, pf)
 
     def _switch_wallet(self):
         """Close the open wallet and return to the Wallet Options screen."""
@@ -1769,6 +1980,7 @@ class MainWindow(QMainWindow):
         self.qr_label.clear()
         self.history_view.clear()
         self.send_addr.clear(); self.send_amount.clear(); self.send_fee.clear()
+        self._max_mode = False
         self.status("Wallet closed. Choose a wallet option.")
         self.wallet_choice.setCurrentIndex(0)
         self._populate_wallet_list()
@@ -1797,7 +2009,7 @@ class MainWindow(QMainWindow):
                 self.status(f"Export failed: {res.error or 'unknown'}")
 
         self.status("Exporting…")
-        self._submit(self.driver.export_mnemonic, done, pw)
+        self._submit(self.driver.export_mnemonic, done, pw, "")
 
     # ── Consolidate (sweep) ──────────────────────────────────────────────────
 
@@ -1877,7 +2089,8 @@ class MainWindow(QMainWindow):
                                   res.error or "Sweep did not complete.")
 
             self.status("Consolidating…")
-            self._submit(self.driver.sweep, swept, pw)
+            self._run_payment_op(self.driver.sweep, (pw,), swept,
+                                 on_cancel=lambda: self.status(""))
 
         self.status("Reading UTXOs…")
         task = CliRunnable(work)

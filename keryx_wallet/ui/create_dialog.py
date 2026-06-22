@@ -23,10 +23,24 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit,
     QPushButton, QCheckBox, QPlainTextEdit, QMessageBox, QWidget,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtWidgets import QApplication
 
 from keryx_wallet.ui.theme import WARNING_LABEL, CAUTION_LABEL, ACCENT_LABEL, MONO_BLOCK
 from keryx_wallet.ui import dialogs
+
+
+def _copy_button(text_to_copy: str) -> QPushButton:
+    """A 'Copy phrase' button with brief 'Copied' feedback (like copy-address)."""
+    btn = QPushButton(_t("copy_phrase"))
+
+    def do_copy():
+        QApplication.clipboard().setText(text_to_copy or "")
+        btn.setText(_t("copied"))
+        QTimer.singleShot(1200, lambda: btn.setText(_t("copy_phrase")))
+
+    btn.clicked.connect(do_copy)
+    return btn
 
 
 class CreateInputDialog(QDialog):
@@ -88,6 +102,12 @@ class CreateInputDialog(QDialog):
         if self.pw1.text() != self.pw2.text():
             dialogs.message(self, _t("passwords_no_match"), "", "warn")
             return
+        # If a BIP39 passphrase was entered, warn (red) BEFORE creating — it
+        # can't be recovered and becomes the payment secret for transactions.
+        if self.bip39.text():
+            if not dialogs.confirm(self, _t("bip39_passphrase"),
+                                   _t("create_passphrase_warning"), danger=True):
+                return
         self._values = {
             "name": name,
             "account_title": self.title.text(),
@@ -208,6 +228,8 @@ class ExportRevealDialog(QDialog):
         mbox.setStyleSheet(MONO_BLOCK)
         mbox.setFixedHeight(80)
         v.addWidget(mbox)
+        crow = QHBoxLayout(); crow.addStretch(1); crow.addWidget(_copy_button(mnemonic))
+        v.addLayout(crow)
 
         if xpub:
             v.addWidget(QLabel(_t("xpub_label")))
@@ -247,6 +269,8 @@ class MnemonicBackupDialog(QDialog):
         mbox.setStyleSheet(MONO_BLOCK)
         mbox.setFixedHeight(80)
         v.addWidget(mbox)
+        crow = QHBoxLayout(); crow.addStretch(1); crow.addWidget(_copy_button(mnemonic))
+        v.addLayout(crow)
 
         if address:
             v.addWidget(QLabel(_t("deposit_address")))

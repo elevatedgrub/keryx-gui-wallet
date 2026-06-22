@@ -368,6 +368,8 @@ class KeryxCliDriver:
         "enc_password":   re.compile(r"(?i)enter wallet encryption password:\s*"),
         "reenter_pass":   re.compile(r"(?i)re-?enter wallet encryption password:\s*"),
         "bip39":          re.compile(r"(?i)enter bip39 mnemonic passphrase[^\n]*:\s*"),
+        # A NON-empty bip39 passphrase triggers a confirmation re-entry prompt.
+        "reenter_bip39":  re.compile(r"(?i)re-?enter mnemonic passphrase[^\n]*:\s*"),
     }
     # The mnemonic block is delimited by the "Your default wallet account
     # mnemonic:" header; the deposit address follows "deposit address:".
@@ -454,6 +456,16 @@ class KeryxCliDriver:
                                   "No wallet created (or incomplete).")
                     # Matched the expected prompt; answer it.
                     self._submit_line(value)
+
+                # A NON-empty bip39 passphrase makes the CLI ask to re-enter it
+                # for confirmation. Answer that with the same passphrase; an empty
+                # passphrase skips this prompt entirely.
+                if bip39_passphrase:
+                    idx = self._child.expect(
+                        [self.CREATE_PROMPTS["reenter_bip39"], READY_PROMPT,
+                         pexpect.TIMEOUT, pexpect.EOF], timeout=timeout)
+                    if idx == 0:
+                        self._submit_line(bip39_passphrase)
 
                 # After the bip39 answer the CLI prints the mnemonic block and
                 # returns to the ready prompt. Capture everything up to it.
@@ -552,6 +564,14 @@ class KeryxCliDriver:
                                   "No wallet imported.")
                     self._submit_line(value)
 
+                # A NON-empty bip39 passphrase makes the CLI ask to re-enter it.
+                if bip39_passphrase:
+                    idx = self._child.expect(
+                        [self.CREATE_PROMPTS["reenter_bip39"], self.MNEMONIC_PROMPT,
+                         READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF], timeout=timeout)
+                    if idx == 0:
+                        self._submit_line(bip39_passphrase)
+
                 # NEW step: the Mnemonic: prompt — supply the recovery phrase.
                 idx = self._child.expect(
                     [self.MNEMONIC_PROMPT, READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
@@ -628,6 +648,9 @@ class KeryxCliDriver:
 
     # Verified prompt strings from the real keryx-cli binary.
     PW_PROMPT = re.compile(r"(?i)enter wallet password:\s*")
+    # Shown by `export mnemonic` ONLY for wallets created with a BIP39 passphrase
+    # — this is where that passphrase ("payment password") goes.
+    PAYMENT_PW_PROMPT = re.compile(r"(?i)enter payment password:\s*")
     # The numbered account-selection prompt. ONLY appears with 2+ accounts; a
     # single-account wallet auto-selects on bare `select` (no prompt). Ends in
     # ": " so it never collides with the READY_PROMPT ("$ ").
@@ -766,7 +789,7 @@ class KeryxCliDriver:
     ACCOUNT_NAME_PROMPT = re.compile(r"(?i)enter account name[^\n]*:\s*")
 
     def create_account(self, name: str, password: str,
-                       acct_type: str = "bip32",
+                       acct_type: str = "bip32", payment_secret: str = "",
                        timeout: int = DEFAULT_TIMEOUT) -> CliResult:
         """
         Create a new account (type REQUIRED: bip32|multisig|legacy). The name is
@@ -826,11 +849,20 @@ class KeryxCliDriver:
                                  error="Did not get the password prompt for "
                                        "account create. No account created.")
             self._submit_line(password)
+            # A passphrase wallet also asks for the payment password here.
             try:
-                self._child.expect([READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
-                                   timeout=timeout)
+                idx2 = self._child.expect(
+                    [self.PAYMENT_PW_PROMPT, READY_PROMPT, pexpect.TIMEOUT,
+                     pexpect.EOF], timeout=timeout)
             except Exception as e:  # noqa
                 return CliResult(cmd, "", ok=False, error=str(e))
+            if idx2 == 0:
+                self._submit_line(payment_secret)
+                try:
+                    self._child.expect([READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
+                                       timeout=timeout)
+                except Exception as e:  # noqa
+                    return CliResult(cmd, "", ok=False, error=str(e))
             output = _ansi_strip(self._child.before or "").strip()
             low = output.lower()
             if "unable to decrypt" in low or "incorrect" in low \
@@ -1057,15 +1089,20 @@ class KeryxCliDriver:
                                  ok=False,
                                  error="select timed out or the CLI exited.")
 
-    def export_mnemonic(self, password: str,
+    def export_mnemonic(self, password: str, bip39_passphrase: str = "",
                         timeout: int = DEFAULT_TIMEOUT) -> CliResult:
         """
         Reveal the open wallet's recovery phrase via `export mnemonic`.
 
         Verified flow:
           export mnemonic
-          -> Enter wallet password:   (password to decrypt)
+          -> Enter wallet password:    (wallet decryption password)
+          -> Enter payment password:   (ONLY if the wallet has a BIP39 passphrase
+                                        — this is that passphrase)
           -> prints "extended public key:\\n<kpub...>\\nmnemonic:\\n<phrase>"
+
+        Wallets created WITHOUT a passphrase skip the payment-password prompt; for
+        those, bip39_passphrase is ignored.
 
         SECURITY: this reveals the seed phrase, which grants full control of the
         wallet. A wallet must already be open. The caller (GUI) must show this
@@ -1094,17 +1131,38 @@ class KeryxCliDriver:
                                  error="Did not receive the password prompt for "
                                        "export. Ensure a wallet is open.")
             self._submit_line(password)
+            # A wallet created WITH a BIP39 passphrase prompts for the "payment
+            # password" here. VERIFIED: keryx-cli cannot actually export such a
+            # wallet's mnemonic — every value fails ("payment secret is
+            # required" / "Unable to decrypt" / "Decryption secret is 'None'").
+            # We still answer the prompt so we don't hang, then report the real
+            # reason instead of a misleading "wrong password" after a timeout.
             try:
-                self._child.expect([READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
-                                   timeout=timeout)
+                idx2 = self._child.expect(
+                    [self.PAYMENT_PW_PROMPT, READY_PROMPT, pexpect.TIMEOUT,
+                     pexpect.EOF], timeout=timeout)
             except Exception as e:  # noqa
                 return CliResult(cmd, "", ok=False, error=str(e))
+            if idx2 == 0:
+                self._submit_line(bip39_passphrase)
+                try:
+                    self._child.expect([READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
+                                       timeout=timeout)
+                except Exception as e:  # noqa
+                    return CliResult(cmd, "", ok=False, error=str(e))
+                output = _ansi_strip(self._child.before or "")
+                if "mnemonic:" in output.lower():
+                    return CliResult(cmd, output.strip(), ok=True)
+                return CliResult(
+                    cmd, output.strip(), ok=False,
+                    error="keryx-cli can't export the recovery phrase of a wallet "
+                          "created with a BIP39 passphrase. Your backup is the "
+                          "phrase + passphrase you saved when you created it.")
             output = _ansi_strip(self._child.before or "")
             lowered = output.lower()
             if "mnemonic:" not in lowered:
-                # At this point a wallet is open and we supplied a password, so a
-                # missing mnemonic almost always means the password was wrong
-                # (decryption failed). Surface that clearly.
+                # No-passphrase wallet but no mnemonic → the wallet password was
+                # wrong (decryption failed).
                 return CliResult(cmd, output.strip(), ok=False,
                                  error="Wrong password.")
             return CliResult(cmd, output.strip(), ok=True)
@@ -1148,7 +1206,8 @@ class KeryxCliDriver:
         r"(?i)sweep:\s*fees:\s*([\d.]+).*?utxos:\s*(\d+).*?"
         r"batch transactions:\s*(\d+)", re.DOTALL)
 
-    def sweep(self, password: str, timeout: int = SEND_TIMEOUT) -> CliResult:
+    def sweep(self, password: str, payment_secret: str = "",
+              timeout: int = SEND_TIMEOUT) -> CliResult:
         """
         Consolidate the wallet's UTXOs via `sweep`. Combines many small UTXOs
         into fewer, which speeds up future transactions.
@@ -1156,8 +1215,12 @@ class KeryxCliDriver:
         Verified flow:
           sweep
           -> Enter wallet password:
+          -> Enter payment password:   (ONLY for BIP39-passphrase wallets)
           -> (processes) prints
              "Sweep: Fees: <fee> UTXOs: <count> Batch Transactions: <batches>"
+
+        `payment_secret` is the BIP39 passphrase; only used if the CLI asks for
+        the payment password (passphrase wallets).
 
         Like `send`, sweep BROADCASTS once the password is supplied — there is no
         CLI-side yes/no. The GUI MUST confirm with the user (showing the UTXO
@@ -1189,14 +1252,24 @@ class KeryxCliDriver:
                                        "a wallet is open and you are connected.")
             # POINT OF NO RETURN: supplying the password broadcasts the sweep.
             self._submit_line(password)
+            # A passphrase wallet asks for the payment password before sweeping.
             try:
-                # Sweeping many batches can take a while; allow extra time.
-                self._child.expect([READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
-                                   timeout=max(timeout, 120))
+                idx2 = self._child.expect(
+                    [self.PAYMENT_PW_PROMPT, READY_PROMPT, pexpect.TIMEOUT,
+                     pexpect.EOF], timeout=max(timeout, 120))
             except Exception as e:  # noqa
                 return CliResult(cmd, "", ok=False,
                                  error=f"Sweep submitted but no confirmation "
                                        f"read: {e}")
+            if idx2 == 0:
+                self._submit_line(payment_secret)
+                try:
+                    self._child.expect([READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
+                                       timeout=max(timeout, 120))
+                except Exception as e:  # noqa
+                    return CliResult(cmd, "", ok=False,
+                                     error=f"Sweep submitted but no confirmation "
+                                           f"read: {e}")
             output = _ansi_strip(self._child.before or "").strip()
             lowered = output.lower()
             if "unable to decrypt" in lowered or "incorrect" in lowered:
@@ -1231,16 +1304,20 @@ class KeryxCliDriver:
 
 
     def send(self, address: str, amount: str, priority_fee: str,
-             password: str, timeout: int = SEND_TIMEOUT) -> CliResult:
+             password: str, payment_secret: str = "",
+             timeout: int = SEND_TIMEOUT) -> CliResult:
         """
         Broadcast a transaction. CRITICAL SAFETY CONTRACT:
 
-        `send` broadcasts IMMEDIATELY after the password is supplied — there is
-        no CLI-side yes/no confirmation. Therefore the GUI MUST have already
-        shown the user a confirmation dialog (address, amount, fee, total) and
-        received explicit approval BEFORE this method is called. By the time
-        we're here, the user has committed; supplying the password completes the
-        send. Do not call this method speculatively.
+        `send` broadcasts IMMEDIATELY after the password (and, for a BIP39-
+        passphrase wallet, the payment password) is supplied — there is no
+        CLI-side yes/no confirmation. Therefore the GUI MUST have already shown
+        the user a confirmation dialog (address, amount, fee, total) and received
+        explicit approval BEFORE this method is called.
+
+        `payment_secret` is the BIP39 passphrase; it's only needed for wallets
+        created with one (the CLI then asks "Enter payment password:"). Normal
+        wallets don't see that prompt and the value is ignored.
 
         Returns a CliResult whose .output contains the
         "Send - Amount: ... Total: ... UTXOs: ..." line on success; callers can
@@ -1280,14 +1357,25 @@ class KeryxCliDriver:
                                  error="Did not receive the password prompt for "
                                        "send. Transaction NOT broadcast. Ensure a "
                                        "wallet is open and you are connected.")
-            # POINT OF NO RETURN: supplying the password broadcasts the tx.
+            # POINT OF NO RETURN: supplying the password (and payment password for
+            # a passphrase wallet) broadcasts the tx.
             self._submit_line(password)
             try:
-                self._child.expect([READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
-                                   timeout=timeout)
+                idx2 = self._child.expect(
+                    [self.PAYMENT_PW_PROMPT, READY_PROMPT, pexpect.TIMEOUT,
+                     pexpect.EOF], timeout=timeout)
             except Exception as e:  # noqa
                 return CliResult(cmd, "", ok=False,
                                  error=f"Send submitted but no confirmation read: {e}")
+            if idx2 == 0:
+                # Passphrase wallet — supply the BIP39 passphrase.
+                self._submit_line(payment_secret)
+                try:
+                    self._child.expect([READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
+                                       timeout=timeout)
+                except Exception as e:  # noqa
+                    return CliResult(cmd, "", ok=False,
+                                     error=f"Send submitted but no confirmation read: {e}")
             output = _ansi_strip(self._child.before or "").strip()
             if self.SEND_RESULT.search(output):
                 return CliResult(cmd, output, ok=True)

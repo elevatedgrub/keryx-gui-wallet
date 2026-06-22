@@ -121,6 +121,82 @@ _T = {
         "ko": "계정을 끌어 순서 변경", "es": "Arrastra las cuentas para reordenar",
         "nl": "Sleep accounts om te herschikken",
     },
+    "enter_passphrase_prompt": {
+        "en": "Enter your wallet's BIP39 passphrase",
+        "ru": "Введите парольную фразу BIP39 вашего кошелька",
+        "zh": "输入钱包的 BIP39 口令",
+        "id": "Masukkan frasa sandi BIP39 dompet Anda",
+        "ko": "지갑의 BIP39 암호문을 입력하세요",
+        "es": "Introduce la frase de contraseña BIP39 de tu cartera",
+        "nl": "Voer de BIP39-wachtwoordzin van je portemonnee in",
+    },
+    "create_passphrase_warning": {
+        "en": "Keep your 12-word mnemonic and BIP39 passphrase secure — they "
+              "cannot be recovered after creation. Your BIP39 passphrase will be "
+              "used as a payment secret for transactions.",
+        "ru": "Храните свою фразу из 12 слов и парольную фразу BIP39 в "
+              "безопасности — их нельзя восстановить после создания. Ваша "
+              "парольная фраза BIP39 будет использоваться как платёжный секрет "
+              "для транзакций.",
+        "zh": "请妥善保管您的 12 词助记词和 BIP39 口令——创建后无法恢复。您的 "
+              "BIP39 口令将用作交易的支付密钥。",
+        "id": "Simpan frasa 12 kata dan frasa sandi BIP39 Anda dengan aman — "
+              "keduanya tidak dapat dipulihkan setelah dibuat. Frasa sandi BIP39 "
+              "Anda akan digunakan sebagai rahasia pembayaran untuk transaksi.",
+        "ko": "12단어 니모닉과 BIP39 암호문을 안전하게 보관하세요 — 생성 후에는 "
+              "복구할 수 없습니다. BIP39 암호문은 거래의 결제 비밀로 사용됩니다.",
+        "es": "Guarda de forma segura tu frase de 12 palabras y tu frase de "
+              "contraseña BIP39: no se pueden recuperar tras la creación. Tu "
+              "frase de contraseña BIP39 se usará como secreto de pago para las "
+              "transacciones.",
+        "nl": "Bewaar je 12-woorden mnemonic en BIP39-wachtwoordzin veilig — ze "
+              "kunnen na het aanmaken niet worden hersteld. Je "
+              "BIP39-wachtwoordzin wordt gebruikt als betalingsgeheim voor "
+              "transacties.",
+    },
+    "max": {
+        "en": "Max", "ru": "Макс", "zh": "全部", "id": "Maks",
+        "ko": "최대", "es": "Máx", "nl": "Max",
+    },
+    "max_tip": {
+        "en": "Send the entire balance (amount = balance minus the network fee)",
+        "ru": "Отправить весь баланс (сумма = баланс минус комиссия сети)",
+        "zh": "发送全部余额（金额 = 余额减去网络手续费）",
+        "id": "Kirim seluruh saldo (jumlah = saldo dikurangi biaya jaringan)",
+        "ko": "전체 잔액 보내기 (금액 = 잔액 − 네트워크 수수료)",
+        "es": "Enviar todo el saldo (importe = saldo menos la comisión de red)",
+        "nl": "Verstuur het volledige saldo (bedrag = saldo min netwerkkosten)",
+    },
+    "estimate_unavailable": {
+        "en": "Couldn't estimate the fee. Make sure you're connected, then try "
+              "again.",
+        "ru": "Не удалось рассчитать комиссию. Убедитесь, что вы подключены, и "
+              "повторите попытку.",
+        "zh": "无法估算手续费。请确认已连接后重试。",
+        "id": "Tidak dapat memperkirakan biaya. Pastikan Anda terhubung, lalu "
+              "coba lagi.",
+        "ko": "수수료를 추정할 수 없습니다. 연결되어 있는지 확인 후 다시 "
+              "시도하세요.",
+        "es": "No se pudo estimar la comisión. Asegúrate de estar conectado e "
+              "inténtalo de nuevo.",
+        "nl": "Kon de kosten niet schatten. Controleer of je verbonden bent en "
+              "probeer het opnieuw.",
+    },
+    "insufficient_amount_fee": {
+        "en": "Your total balance can't cover the sending amount plus network "
+              "fees. Try a smaller amount.",
+        "ru": "Вашего общего баланса не хватает на сумму отправки плюс сетевые "
+              "комиссии. Попробуйте меньшую сумму.",
+        "zh": "您的总余额无法支付发送金额加网络手续费。请尝试更小的金额。",
+        "id": "Total saldo Anda tidak cukup untuk jumlah kirim ditambah biaya "
+              "jaringan. Coba jumlah yang lebih kecil.",
+        "ko": "전체 잔액으로 보내는 금액과 네트워크 수수료를 충당할 수 없습니다. "
+              "더 적은 금액으로 시도하세요.",
+        "es": "Tu saldo total no cubre el importe a enviar más las comisiones de "
+              "red. Prueba con un importe menor.",
+        "nl": "Je totale saldo dekt het verzendbedrag plus netwerkkosten niet. "
+              "Probeer een kleiner bedrag.",
+    },
     "estimating": {
         "en": "Estimating fee", "ru": "Расчёт комиссии", "zh": "正在估算手续费",
         "id": "Memperkirakan biaya", "ko": "수수료 추정 중",
@@ -220,6 +296,11 @@ _T = {
     "copied": {
         "en": "Copied ✓", "ru": "Скопировано ✓", "zh": "已复制 ✓",
         "id": "Disalin ✓", "ko": "복사됨 ✓", "es": "Copiado ✓", "nl": "Gekopieerd ✓",
+    },
+    "copy_phrase": {
+        "en": "Copy phrase", "ru": "Копировать фразу", "zh": "复制助记词",
+        "id": "Salin frasa", "ko": "구문 복사", "es": "Copiar frase",
+        "nl": "Zin kopiëren",
     },
     "transactions": {
         "en": "Transactions", "ru": "Транзакции", "zh": "交易", "id": "Transaksi",
@@ -731,13 +812,13 @@ _T = {
         "nl": "optioneel antiphishing-woord/zin",
     },
     "ph_bip39_create": {
-        "en": "optional — REQUIRED to spend/recover if set",
-        "ru": "необязательно — ОБЯЗАТЕЛЬНО для траты/восстановления, если задано",
-        "zh": "可选 — 一旦设置，花费/恢复时必填",
-        "id": "opsional — WAJIB untuk membelanjakan/memulihkan jika diatur",
-        "ko": "선택 사항 — 설정 시 사용/복구에 필수",
-        "es": "opcional — OBLIGATORIA para gastar/recuperar si se establece",
-        "nl": "optioneel — VEREIST om uit te geven/herstellen indien ingesteld",
+        "en": "optional — REQUIRED to spend if set",
+        "ru": "необязательно — ОБЯЗАТЕЛЬНО для траты, если задано",
+        "zh": "可选 — 一旦设置，花费时必填",
+        "id": "opsional — WAJIB untuk membelanjakan jika diatur",
+        "ko": "선택 사항 — 설정 시 사용에 필수",
+        "es": "opcional — OBLIGATORIA para gastar si se establece",
+        "nl": "optioneel — VEREIST om uit te geven indien ingesteld",
     },
     "ph_bip39_import": {
         "en": "only if the original wallet used one",

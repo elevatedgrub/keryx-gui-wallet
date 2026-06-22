@@ -76,6 +76,27 @@ def set_account_order(wallet_id: str, ids: list) -> None:
     save(data)
 
 
+def get_has_passphrase(wallet_id: str) -> bool:
+    """Whether this wallet is known to use a BIP39 passphrase (learned the first
+    time an operation hits the 'Enter payment password' prompt)."""
+    if not wallet_id:
+        return False
+    d = load().get("has_passphrase", {}) or {}
+    return bool(d.get(wallet_id, False))
+
+
+def set_has_passphrase(wallet_id: str, value: bool = True) -> None:
+    if not wallet_id:
+        return
+    data = load()
+    d = data.get("has_passphrase", {})
+    if not isinstance(d, dict):
+        d = {}
+    d[wallet_id] = bool(value)
+    data["has_passphrase"] = d
+    save(data)
+
+
 def get_order_locked(wallet_id: str) -> bool:
     """True once the user has manually reordered this wallet's accounts. A manual
     order is respected as-is (the automatic main-account pin is not applied)."""
