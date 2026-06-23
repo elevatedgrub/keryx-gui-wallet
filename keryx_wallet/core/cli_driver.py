@@ -1025,6 +1025,67 @@ class KeryxCliDriver:
             return CliResult("mute", out2.strip(), ok=ok,
                              error=None if ok else "Could not set mute state.")
 
+    def new_address(self, timeout: int = DEFAULT_TIMEOUT) -> CliResult:
+        """
+        Generate a NEW receive address for the current account (`address new`).
+        Previous addresses are NOT lost — they stay valid and keep receiving;
+        this appends a new one and makes it the default. Returns the new address
+        in .output on success.
+        """
+        res = self.run("address new", timeout=timeout)
+        m = re.search(r"(ker[xy][a-z]*:[0-9a-z]+)", res.output or "", re.IGNORECASE)
+        if m:
+            return CliResult("address new", m.group(1), ok=True)
+        return CliResult("address new", res.output, ok=False,
+                         error="Could not generate a new address.")
+
+    def account_details(self, index: int = 0,
+                        timeout: int = DEFAULT_TIMEOUT) -> CliResult:
+        """
+        Run `details` for an account and return its raw output (receive + change
+        address lists). `details` prompts to select an account when the wallet
+        has 2+ accounts; we answer with `index`.
+        """
+        with self._lock:
+            if self._child is None or not self._child.isalive():
+                return CliResult("details", "", ok=False,
+                                 error="CLI process is not running.")
+            self._flush_buffer()
+            self._submit_line("details")
+            try:
+                idx = self._child.expect(
+                    [self.SELECT_PROMPT, READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
+                    timeout=timeout)
+            except Exception as e:  # noqa
+                return CliResult("details", "", ok=False, error=str(e))
+            if idx == 0:
+                self._submit_line(str(index))
+                try:
+                    self._child.expect([READY_PROMPT, pexpect.TIMEOUT, pexpect.EOF],
+                                       timeout=timeout)
+                except Exception as e:  # noqa
+                    return CliResult("details", "", ok=False, error=str(e))
+            return CliResult("details", _ansi_strip(self._child.before or ""), ok=True)
+
+    @staticmethod
+    def parse_receive_addresses(output: str):
+        """Pull the receive-address list from `details` output."""
+        addrs = []
+        in_recv = False
+        for line in (output or "").splitlines():
+            s = line.strip()
+            if re.match(r"(?i)receive addresses:", s):
+                in_recv = True
+                continue
+            if re.match(r"(?i)change addresses:", s):
+                in_recv = False
+                continue
+            if in_recv:
+                m = re.search(r"(ker[xy][a-z]*:[0-9a-z]+)", s, re.IGNORECASE)
+                if m:
+                    addrs.append(m.group(1))
+        return addrs
+
     def select_account(self, index: int = 0,
                        timeout: int = DEFAULT_TIMEOUT) -> CliResult:
         """

@@ -203,6 +203,35 @@ _T = {
         "ko": "비밀번호를 입력하세요", "es": "Introduce una contraseña",
         "nl": "Voer een wachtwoord in",
     },
+    "addresses_btn": {
+        "en": "Addresses", "ru": "Адреса", "zh": "地址", "id": "Alamat",
+        "ko": "주소", "es": "Direcciones", "nl": "Adressen",
+    },
+    "receive_addresses_title": {
+        "en": "Receive addresses", "ru": "Адреса для получения",
+        "zh": "接收地址", "id": "Alamat penerima", "ko": "수신 주소",
+        "es": "Direcciones de recepción", "nl": "Ontvangstadressen",
+    },
+    "generate_new_address": {
+        "en": "Generate new address", "ru": "Создать новый адрес",
+        "zh": "生成新地址", "id": "Buat alamat baru", "ko": "새 주소 생성",
+        "es": "Generar nueva dirección", "nl": "Nieuw adres genereren",
+    },
+    "addresses_note": {
+        "en": "All addresses below belong to this account and keep receiving — "
+              "generating a new one never disables the old ones.",
+        "ru": "Все адреса ниже принадлежат этому счёту и продолжают принимать "
+              "средства — создание нового не отключает старые.",
+        "zh": "下列所有地址都属于此账户并可继续接收——生成新地址不会停用旧地址。",
+        "id": "Semua alamat di bawah milik akun ini dan tetap menerima — "
+              "membuat yang baru tidak menonaktifkan yang lama.",
+        "ko": "아래 모든 주소는 이 계정의 것이며 계속 수신합니다 — 새 주소를 "
+              "만들어도 기존 주소는 비활성화되지 않습니다.",
+        "es": "Todas las direcciones siguientes pertenecen a esta cuenta y "
+              "siguen recibiendo: generar una nueva no desactiva las anteriores.",
+        "nl": "Alle onderstaande adressen horen bij dit account en blijven "
+              "ontvangen — een nieuw adres maken schakelt de oude niet uit.",
+    },
     "estimating": {
         "en": "Estimating fee", "ru": "Расчёт комиссии", "zh": "正在估算手续费",
         "id": "Memperkirakan biaya", "ko": "수수료 추정 중",

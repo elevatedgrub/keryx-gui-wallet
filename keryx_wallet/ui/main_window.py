@@ -740,15 +740,26 @@ class MainWindow(QMainWindow):
         self.addr_label.setFixedHeight(48)  # room for up to ~2 lines
         self.addr_label.setSizePolicy(QSizePolicy.Policy.Expanding,
                                       QSizePolicy.Policy.Fixed)
-        rb.addWidget(self.addr_label)
-        # Copy button — easier and more reliable than double-clicking a wrapped
-        # address (a double-click only selects up to the ':' word boundary).
+        # "Addresses" button ABOVE the address (left-aligned, fixed width).
+        arow = QHBoxLayout(); arow.setContentsMargins(0, 0, 0, 0)
+        addrs_btn = QPushButton(_t("addresses_btn"))
+        addrs_btn.setToolTip(_t("receive_addresses_title"))
+        addrs_btn.setFixedWidth(110)
+        addrs_btn.clicked.connect(self._open_addresses_dialog)
+        arow.addWidget(addrs_btn); arow.addStretch(1)
+        rb.addLayout(arow)
+        # Copy button — full width, above the address (easier than double-clicking
+        # a wrapped address, which only selects up to the ':' word boundary).
         copy_btn = QPushButton(_t("copy_address"))
         copy_btn.clicked.connect(self._copy_address)
         rb.addWidget(copy_btn)
+        rb.addSpacing(14)   # drop the address down a bit below the Copy button
+        rb.addWidget(self.addr_label)
+        # QR is the focal point of the receive panel — center it in the whole
+        # section (the convention in most wallets), not under a single button.
         self.qr_label = QLabel()
         self.qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.qr_label.setContentsMargins(0, 25, 0, 0)  # 25px lower
+        self.qr_label.setContentsMargins(0, 15, 0, 0)  # raised 10px total (was 25)
         rb.addWidget(self.qr_label)
         rb.addStretch(1)
         rs.addWidget(recv_box, 1)
@@ -1302,6 +1313,82 @@ class MainWindow(QMainWindow):
         if btn is not None:
             btn.setText(_t("copied"))
             QTimer.singleShot(1200, lambda b=btn: b.setText(_t("copy_address")))
+
+    def _open_addresses_dialog(self):
+        """Show ALL of the account's receive addresses (each copyable) with a
+        'Generate new address' button. Old addresses are kept — generating a new
+        one only appends and changes the default shown on the dashboard."""
+        if not self._wallet_open:
+            return
+
+        def build(addresses):
+            from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                                         QScrollArea, QWidget, QLineEdit, QApplication,
+                                         QPushButton)
+            from keryx_wallet.ui.theme import TOKENS, MONO
+            from keryx_wallet.ui.dialogs import _btn
+            dlg = QDialog(self); dlg.setModal(True); dlg.setMinimumWidth(600)
+            dlg.setStyleSheet(f"QDialog {{ background:{TOKENS['bg']}; }}")
+            v = QVBoxLayout(dlg)
+            title = QLabel(_t("receive_addresses_title"))
+            title.setStyleSheet(
+                f"color:{TOKENS['green']}; font-weight:700; font-size:15px;")
+            v.addWidget(title)
+            note = QLabel(_t("addresses_note")); note.setWordWrap(True)
+            note.setStyleSheet(f"color:{TOKENS['text_dim']}; font-size:12px;")
+            v.addWidget(note)
+            scroll = QScrollArea(); scroll.setWidgetResizable(True)
+            scroll.setMinimumHeight(220)
+            inner = QWidget(); rows = QVBoxLayout(inner)
+            for a in addresses:
+                r = QHBoxLayout()
+                fld = QLineEdit(a); fld.setReadOnly(True); fld.setCursorPosition(0)
+                fld.setStyleSheet(
+                    f"QLineEdit {{ background:{TOKENS['surface_2']}; "
+                    f"color:{TOKENS['green']}; font-family:{MONO}; "
+                    f"border:1px solid {TOKENS['border']}; border-radius:5px; "
+                    f"padding:5px; }}")
+                # Plain themed button (matches the main Copy button) so the
+                # label isn't clipped like the fixed-width dialog button was.
+                cp = QPushButton(_t("copy_address"))
+
+                def mk(addr, b):
+                    def do():
+                        QApplication.clipboard().setText(addr)
+                        b.setText(_t("copied"))
+                        QTimer.singleShot(1200, lambda: b.setText(_t("copy_address")))
+                    return do
+                cp.clicked.connect(mk(a, cp))
+                r.addWidget(fld, 1); r.addWidget(cp)
+                rows.addLayout(r)
+            rows.addStretch(1)
+            scroll.setWidget(inner); v.addWidget(scroll)
+            brow = QHBoxLayout()
+            gen = _btn(_t("generate_new_address"), primary=True)
+            closeb = _btn(_t("ok"), primary=False)
+
+            def on_gen():
+                def done(res):
+                    if getattr(res, "ok", False):
+                        dlg.accept()
+                        self._show_address()   # default shown is now the new one
+                        QTimer.singleShot(0, self._open_addresses_dialog)  # reopen fresh
+                    else:
+                        dialogs._warn(self, _t("generate_new_address"),
+                                      getattr(res, "error", "") or "")
+                self._submit(self.driver.new_address, done)
+            gen.clicked.connect(on_gen)
+            closeb.clicked.connect(dlg.accept)
+            brow.addWidget(gen); brow.addStretch(1); brow.addWidget(closeb)
+            v.addLayout(brow)
+            dlg.exec()
+
+        self.status(_t("receive_addresses_title") + "…")
+        self._submit(
+            self.driver.account_details,
+            lambda res: build(KeryxCliDriver.parse_receive_addresses(
+                getattr(res, "output", "") or "")),
+            self._selected_account_index)
 
     def _show_address(self):
         def done(res: CliResult):
