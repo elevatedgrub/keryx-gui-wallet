@@ -165,9 +165,18 @@ def get_password(parent, title: str, prompt: str):
     row = QHBoxLayout(); row.addStretch(1)
     cancel = _btn(_t("cancel"), primary=False)
     okb = _btn(_t("ok"), primary=True)
+
+    def _accept():
+        # Don't accept an empty password — tell the user instead of doing nothing.
+        if not field.text():
+            message(dlg, _t("supply_password"), "", "warn")
+            field.setFocus()
+            return
+        dlg.accept()
+
     cancel.clicked.connect(dlg.reject)
-    okb.clicked.connect(dlg.accept)
-    field.returnPressed.connect(dlg.accept)
+    okb.clicked.connect(_accept)
+    field.returnPressed.connect(_accept)
     row.addWidget(cancel); row.addWidget(okb)
     v.addLayout(row)
     field.setFocus()

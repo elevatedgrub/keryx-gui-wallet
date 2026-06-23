@@ -118,11 +118,6 @@ class MainWindow(QMainWindow):
         self._explorer_txs = None       # cached explorer txs (address-sourced)
         self._tx_page = 0               # current transactions page (0-based)
 
-        # Clear a button's stuck :hover after it opens a dialog (the dialog steals
-        # the mouse-leave, so the button stays highlighted). App-wide filter.
-        from PyQt6.QtWidgets import QApplication as _QApp
-        _QApp.instance().installEventFilter(self)
-
         self._balance_timer = QTimer(self)
         self._balance_timer.setInterval(10_000)
         self._balance_timer.timeout.connect(self._auto_refresh_balance)
@@ -1224,34 +1219,6 @@ class MainWindow(QMainWindow):
         self._refresh_price()
         self._load_history()
 
-    def eventFilter(self, obj, event):
-        from PyQt6.QtCore import QEvent
-        from PyQt6.QtWidgets import QPushButton
-        if (event.type() == QEvent.Type.MouseButtonRelease
-                and isinstance(obj, QPushButton)):
-            # After this click (which may open a modal dialog), check on the next
-            # event-loop turn whether the cursor actually left the button; if so,
-            # clear the stuck :hover. The timer fires even inside a modal's loop.
-            QTimer.singleShot(0, lambda b=obj: self._clear_stuck_hover(b))
-        return super().eventFilter(obj, event)
-
-    @staticmethod
-    def _clear_stuck_hover(btn):
-        # If a modal dialog is open now, this click opened it and the button
-        # missed its mouse-leave (it stays green). Clear the hover regardless of
-        # the cursor position — the cursor check is unreliable on Wayland, where
-        # the dialog opens top-left rather than over the button.
-        from PyQt6.QtCore import QEvent
-        from PyQt6.QtWidgets import QApplication
-        try:
-            if btn is None or QApplication.activeModalWidget() is None:
-                return
-            btn.setAttribute(Qt.WidgetAttribute.WA_UnderMouse, False)
-            QApplication.sendEvent(btn, QEvent(QEvent.Type.Leave))
-            btn.update()
-        except Exception:
-            pass
-
     def _fit_address_font(self, w):
         # No longer used — the address now wraps in a QTextEdit instead of
         # shrinking to fit. Kept as a harmless no-op for any stray callers.
@@ -1824,6 +1791,11 @@ class MainWindow(QMainWindow):
                 self.status("Send cancelled.")
                 return
             pw = dlg.password()
+            # Leaving Max mode now (and stopping its recalc timer) so the field
+            # clears after the send don't trigger a stale estimate → spurious
+            # "couldn't estimate" / "insufficient funds" AFTER the send.
+            self._max_mode = False
+            self._max_recalc.stop()
 
             def on_result(res):
                 # _run_payment_op already deferred this via singleShot, so it's
@@ -1910,7 +1882,11 @@ class MainWindow(QMainWindow):
         # the fee (e.g. 2% of 33 KRX ≈ 0.66 ≈ the 0.6 fee → ~0.06 dust change →
         # "Mass calculation error"). A ~2 KRX buffer leaves safe change while
         # still spending (near) all UTXOs.
-        probe = (bal - 2.0) if bal > 2.0 else bal * 0.5
+        # Leave a buffer that's the larger of 2 KRX or 5% of the balance, so the
+        # probe can afford the fee even on a big multi-UTXO wallet (a fixed 2 KRX
+        # buffer fails when the all-UTXO fee exceeds it → "couldn't estimate").
+        buffer = max(2.0, bal * 0.05)
+        probe = (bal - buffer) if bal > buffer else bal * 0.5
         probe_s = f"{probe:.8f}".rstrip("0").rstrip(".")
 
         def fmt(sompi):

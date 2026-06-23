@@ -656,10 +656,13 @@ class KeryxCliDriver:
     # ": " so it never collides with the READY_PROMPT ("$ ").
     SELECT_PROMPT = re.compile(r"(?i)please select account\s*\[\d+\.\.\d+\][^\n]*:\s*")
     # `send` output line, e.g. "Send - Amount: 1.5 KRX  Fees: 0.1 KRX  Total: 1.6 KRX  UTXOs: 3"
+    # NB: keryx-cli formats large amounts with thousands separators (e.g.
+    # "32,824.96851968"), so the numeric groups must allow commas; strip them
+    # before float().
     SEND_RESULT = re.compile(
-        r"Send\s*-\s*Amount:\s*([\d.]+)\s*KRX\s+"
-        r"Fees:\s*([\d.]+)\s*KRX\s+"
-        r"Total:\s*([\d.]+)\s*KRX\s+"
+        r"Send\s*-\s*Amount:\s*([\d.,]+)\s*KRX\s+"
+        r"Fees:\s*([\d.,]+)\s*KRX\s+"
+        r"Total:\s*([\d.,]+)\s*KRX\s+"
         r"UTXOs:\s*(\d+)",
         re.IGNORECASE,
     )
@@ -1396,17 +1399,18 @@ class KeryxCliDriver:
         if not m:
             return None
         return {
-            "amount": m.group(1),
-            "fees": m.group(2),
-            "total": m.group(3),
+            "amount": m.group(1).replace(",", ""),
+            "fees": m.group(2).replace(",", ""),
+            "total": m.group(3).replace(",", ""),
             "utxos": int(m.group(4)),
         }
 
     # `estimate` output line: "Estimate - Amount: 1 KRX  Fees: 0.6 KRX  Total: 1.6 KRX  UTXOs: 1"
+    # (large amounts may have thousands separators, e.g. "32,824.96851968").
     ESTIMATE_RESULT = re.compile(
-        r"Estimate\s*-\s*Amount:\s*([\d.]+)\s*KRX\s+"
-        r"Fees:\s*([\d.]+)\s*KRX\s+"
-        r"Total:\s*([\d.]+)\s*KRX\s+"
+        r"Estimate\s*-\s*Amount:\s*([\d.,]+)\s*KRX\s+"
+        r"Fees:\s*([\d.,]+)\s*KRX\s+"
+        r"Total:\s*([\d.,]+)\s*KRX\s+"
         r"UTXOs:\s*(\d+)",
         re.IGNORECASE,
     )
@@ -1449,8 +1453,8 @@ class KeryxCliDriver:
         if not m:
             return None
         return {
-            "amount": m.group(1),
-            "fees": m.group(2),
-            "total": m.group(3),
+            "amount": m.group(1).replace(",", ""),
+            "fees": m.group(2).replace(",", ""),
+            "total": m.group(3).replace(",", ""),
             "utxos": int(m.group(4)),
         }

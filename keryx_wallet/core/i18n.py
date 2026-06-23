@@ -197,6 +197,12 @@ _T = {
         "nl": "Je totale saldo dekt het verzendbedrag plus netwerkkosten niet. "
               "Probeer een kleiner bedrag.",
     },
+    "supply_password": {
+        "en": "Please supply a password", "ru": "Введите пароль",
+        "zh": "请输入密码", "id": "Harap masukkan kata sandi",
+        "ko": "비밀번호를 입력하세요", "es": "Introduce una contraseña",
+        "nl": "Voer een wachtwoord in",
+    },
     "estimating": {
         "en": "Estimating fee", "ru": "Расчёт комиссии", "zh": "正在估算手续费",
         "id": "Memperkirakan biaya", "ko": "수수료 추정 중",
