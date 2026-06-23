@@ -32,6 +32,9 @@ sudo apt install -y python3-venv python3-pip libegl1 libxkbcommon0 \
 sudo apt install -y libgl1 || sudo apt install -y libgl1-mesa-glx || true
 # Some minimal images also need these for the xcb platform plugin:
 sudo apt install -y libxcb-cursor0 libxcb-xinerama0 || true
+# Needed at BUILD time: PyInstaller imports PyQt6.QtNetwork during analysis,
+# which loads libgssapi_krb5.so.2. Present on desktops, missing on minimal/server.
+sudo apt install -y libgssapi-krb5-2 || true
 
 # 2. Isolated build environment.
 echo "-- creating build virtualenv --"
