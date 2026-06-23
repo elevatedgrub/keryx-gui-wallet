@@ -1350,7 +1350,7 @@ class KeryxCliDriver:
                     or "aead" in lowered or "decrypt" in lowered):
                 if idx2 == 0:
                     return CliResult(cmd, output, ok=False,
-                                     error="Wrong BIP39 passphrase.")
+                                     error="Wrong wallet password or BIP39 passphrase.")
                 return CliResult(cmd, output, ok=False, error="Wrong password.")
             # Success if we see the structured result OR any sweep/fee/batch
             # confirmation text. The exact wording/spacing can vary, so don't
@@ -1465,15 +1465,16 @@ class KeryxCliDriver:
             if idx2 == 0 and not payment_secret:
                 return CliResult(cmd, output, ok=False,
                                  error="Enter payment password")
-            # Wrong credentials (mirror open_wallet/sweep). If we got PAST the
-            # payment-password prompt (idx2 == 0) with a real secret, the wallet
-            # password was accepted and it's the BIP39 passphrase that failed.
+            # Wrong credentials. keryx-cli collects the wallet password AND (for a
+            # passphrase wallet) the payment password BEFORE validating either, so
+            # a decrypt failure after the payment prompt (idx2 == 0) could be the
+            # wallet password OR the passphrase — we can't tell which. Don't guess.
             if ("unable to decrypt" in lowered or "incorrect" in lowered
                     or "aead" in lowered or "wrong password" in lowered
                     or "decrypt" in lowered):
                 if idx2 == 0:
                     return CliResult(cmd, output, ok=False,
-                                     error="Wrong BIP39 passphrase.")
+                                     error="Wrong wallet password or BIP39 passphrase.")
                 return CliResult(cmd, output, ok=False, error="Wrong password.")
             if "error" in lowered or "insufficient" in lowered or "invalid" in lowered:
                 return CliResult(cmd, output, ok=False,

@@ -1041,7 +1041,14 @@ class MainWindow(QMainWindow):
         `base_args` is the positional args BEFORE payment_secret. For a known
         passphrase wallet we ask upfront; otherwise we try without, and if the
         CLI asks for the payment password we record it, prompt, and retry. Normal
-        wallets are never asked."""
+        wallets are never asked.
+
+        NOTE: keryx-cli prompts for the wallet password AND (for a passphrase
+        wallet) the payment password before it validates either — it does not
+        reject a wrong wallet password before the payment prompt. So we cannot
+        report a wrong wallet password before collecting the passphrase; a failed
+        attempt is reported as "Wrong wallet password or BIP39 passphrase."
+        Asking the passphrase upfront keeps it to a single CLI round-trip."""
         from keryx_wallet.core import config
 
         def run(secret):
@@ -1088,19 +1095,35 @@ class MainWindow(QMainWindow):
         if not ok:
             return
 
+        # Remember which accounts existed BEFORE the create so we can identify the
+        # new one by diff — robust even if the "account created" line won't parse.
+        prev_ids = {a["id"] for a in self._accounts}
+
         def done(res: CliResult):
             if res.ok:
                 parsed = KeryxCliDriver.parse_created_account(res.output)
-                # The CLI auto-selects the new account; track it by id so the
-                # refresh reconciles to it (and it appears at the end of the
-                # stable display order).
-                if parsed and parsed.get("id"):
-                    self._selected_account_id = parsed["id"]
                 self.status(_t("account_created"))
-                self._refresh_accounts()   # repopulate switcher (now includes it)
-                self._show_address()       # CLI auto-selected it → its address
-                detail = f"{parsed['name']} [{parsed['id']}]" if parsed else ""
-                dialogs.message(self, _t("account_created"), detail, "info")
+
+                def after_refresh(r2: CliResult):
+                    new_id = parsed.get("id") if parsed else None
+                    if r2.ok and r2.output:
+                        self._last_list_output = r2.output
+                        accts = self._parse_accounts(r2.output)
+                        # The CLI auto-selects the newly created account; find the
+                        # id that wasn't there before and select it (fall back to
+                        # the parsed id only if the diff is inconclusive).
+                        added = [a["id"] for a in accts if a["id"] not in prev_ids]
+                        if added:
+                            new_id = added[0]
+                        if new_id:
+                            self._selected_account_id = new_id
+                        self._update_balance_display(r2.output)
+                        self._show_address()   # now matches the selected account
+                    detail = f"[{new_id}]" if new_id else ""
+                    dialogs.message(self, _t("account_created"), detail, "info")
+
+                self._submit(self.driver.run, after_refresh, "list")
+                self._refresh_price()
             else:
                 dialogs._warn(self, _t("create_account_failed"),
                               res.error or _t("create_account_failed"))
@@ -1887,7 +1910,7 @@ class MainWindow(QMainWindow):
                             dialogs._warn(self, _t("insufficient_funds"),
                                           _t("insufficient_amount_fee"))
                         elif "passphrase" in blob:
-                            dialogs._warn(self, _t("wrong_passphrase"), "")
+                            dialogs._warn(self, _t("wrong_password_or_passphrase"), "")
                         elif "wrong password" in blob:
                             dialogs._warn(self, _t("wrong_password"), "")
                         else:
@@ -2148,7 +2171,7 @@ class MainWindow(QMainWindow):
                     blob = ((getattr(res, "error", "") or "") + " "
                             + (getattr(res, "output", "") or "")).lower()
                     if "passphrase" in blob:
-                        dialogs._warn(self, _t("wrong_passphrase"), "")
+                        dialogs._warn(self, _t("wrong_password_or_passphrase"), "")
                     elif "wrong password" in blob:
                         dialogs._warn(self, _t("wrong_password"), "")
                     else:

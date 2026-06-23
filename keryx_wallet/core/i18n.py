@@ -511,6 +511,15 @@ _T = {
         "es": "No se pudieron leer los UTXOs",
         "nl": "Kan UTXO's niet lezen",
     },
+    "wrong_password_or_passphrase": {
+        "en": "Wrong wallet password or BIP39 passphrase.",
+        "ru": "Неверный пароль кошелька или парольная фраза BIP39.",
+        "zh": "钱包密码或 BIP39 口令错误。",
+        "id": "Kata sandi dompet atau frasa sandi BIP39 salah.",
+        "ko": "지갑 비밀번호 또는 BIP39 암호문이 틀렸습니다.",
+        "es": "Contraseña del monedero o frase BIP39 incorrecta.",
+        "nl": "Verkeerd portemonnee-wachtwoord of BIP39-wachtwoordzin.",
+    },
     "wrong_passphrase": {
         "en": "Wrong BIP39 passphrase.",
         "ru": "Неверная парольная фраза BIP39.",
