@@ -21,10 +21,8 @@ from __future__ import annotations
 from keryx_wallet.core.i18n import t as _t
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit,
-    QPushButton, QCheckBox, QPlainTextEdit, QMessageBox, QWidget,
+    QPushButton, QCheckBox, QPlainTextEdit,
 )
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QApplication
 
 from keryx_wallet.ui.theme import WARNING_LABEL, CAUTION_LABEL, ACCENT_LABEL, MONO_BLOCK
 from keryx_wallet.ui import dialogs
@@ -32,15 +30,8 @@ from keryx_wallet.ui import dialogs
 
 def _copy_button(text_to_copy: str) -> QPushButton:
     """A 'Copy phrase' button with brief 'Copied' feedback (like copy-address)."""
-    btn = QPushButton(_t("copy_phrase"))
-
-    def do_copy():
-        QApplication.clipboard().setText(text_to_copy or "")
-        btn.setText(_t("copied"))
-        QTimer.singleShot(1200, lambda: btn.setText(_t("copy_phrase")))
-
-    btn.clicked.connect(do_copy)
-    return btn
+    return dialogs.attach_copy(QPushButton(_t("copy_phrase")),
+                               text_to_copy, "copy_phrase")
 
 
 class CreateInputDialog(QDialog):
@@ -94,7 +85,7 @@ class CreateInputDialog(QDialog):
         import re
         name = self.name.text().strip()
         if not re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", name or ""):
-            dialogs.message(self, "Name is required: 1-64 of letters, digits, _ -.", "", "warn")
+            dialogs.message(self, _t("name_required_rule"), "", "warn")
             return
         if not self.pw1.text():
             dialogs.message(self, _t("password_required"), "", "warn")
@@ -179,7 +170,7 @@ class ImportInputDialog(QDialog):
         import re
         name = self.name.text().strip()
         if not re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", name or ""):
-            dialogs.message(self, "Name is required: 1-64 of letters, digits, _ -.", "", "warn")
+            dialogs.message(self, _t("name_required_rule"), "", "warn")
             return
         if not self.pw1.text():
             dialogs.message(self, _t("password_required"), "", "warn")

@@ -1341,7 +1341,16 @@ class KeryxCliDriver:
                                            f"read: {e}")
             output = _ansi_strip(self._child.before or "").strip()
             lowered = output.lower()
-            if "unable to decrypt" in lowered or "incorrect" in lowered:
+            # Probe attempt on a passphrase wallet — ask for the BIP39 passphrase
+            # and retry (handled by the caller); not an error or a success.
+            if idx2 == 0 and not payment_secret:
+                return CliResult(cmd, output, ok=False,
+                                 error="Enter payment password")
+            if ("unable to decrypt" in lowered or "incorrect" in lowered
+                    or "aead" in lowered or "decrypt" in lowered):
+                if idx2 == 0:
+                    return CliResult(cmd, output, ok=False,
+                                     error="Wrong BIP39 passphrase.")
                 return CliResult(cmd, output, ok=False, error="Wrong password.")
             # Success if we see the structured result OR any sweep/fee/batch
             # confirmation text. The exact wording/spacing can vary, so don't
@@ -1450,6 +1459,22 @@ class KeryxCliDriver:
                 return CliResult(cmd, output, ok=True)
             # No result line — surface output so the user can see what happened.
             lowered = output.lower()
+            # First (probe) attempt on a passphrase wallet: the payment-password
+            # prompt appeared but we supplied no secret. Signal that so the caller
+            # prompts for the BIP39 passphrase and retries — this is NOT an error.
+            if idx2 == 0 and not payment_secret:
+                return CliResult(cmd, output, ok=False,
+                                 error="Enter payment password")
+            # Wrong credentials (mirror open_wallet/sweep). If we got PAST the
+            # payment-password prompt (idx2 == 0) with a real secret, the wallet
+            # password was accepted and it's the BIP39 passphrase that failed.
+            if ("unable to decrypt" in lowered or "incorrect" in lowered
+                    or "aead" in lowered or "wrong password" in lowered
+                    or "decrypt" in lowered):
+                if idx2 == 0:
+                    return CliResult(cmd, output, ok=False,
+                                     error="Wrong BIP39 passphrase.")
+                return CliResult(cmd, output, ok=False, error="Wrong password.")
             if "error" in lowered or "insufficient" in lowered or "invalid" in lowered:
                 return CliResult(cmd, output, ok=False,
                                  error="Send failed — see output.")

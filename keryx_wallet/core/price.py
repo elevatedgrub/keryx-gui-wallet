@@ -13,6 +13,7 @@ fully offline.
 from __future__ import annotations
 
 import json
+import time
 import urllib.request
 import urllib.error
 from typing import Optional
@@ -62,7 +63,35 @@ def _extract_last_price(obj) -> Optional[float]:
     return None
 
 
+# Cache the last good price so the periodic balance refresh (every ~10s) doesn't
+# hit the price API on every tick — the price barely moves between ticks and
+# hammering the public endpoint risks rate-limiting.
+_CACHE_TTL = 60.0  # seconds
+_cache_price: Optional[float] = None
+_cache_ts: float = 0.0
+
+
 def get_krx_usdt_price() -> Optional[float]:
+    """
+    Return the current KRX price in USDT (≈ USD), or None if unavailable.
+    Cached for up to _CACHE_TTL seconds; on a miss it refetches and, on success,
+    refreshes the cache. A failed refetch returns the last cached value if any.
+    """
+    global _cache_price, _cache_ts
+    now = time.monotonic()
+    if _cache_price is not None and (now - _cache_ts) < _CACHE_TTL:
+        return _cache_price
+    price = _fetch_krx_usdt_price()
+    if price is not None:
+        _cache_price = price
+        _cache_ts = now
+        return price
+    # Refetch failed — fall back to the last known price rather than flicker to
+    # "no value" on a transient network blip.
+    return _cache_price
+
+
+def _fetch_krx_usdt_price() -> Optional[float]:
     """
     Return the current KRX price in USDT (≈ USD), or None if unavailable.
     Tries the direct symbol lookup, then falls back to scanning the market list.

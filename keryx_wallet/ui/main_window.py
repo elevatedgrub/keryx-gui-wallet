@@ -38,23 +38,27 @@ import os
 import sys
 
 
-def _dbg(msg: str) -> None:
-    """Append a debug line to ~/keryx-debug.log when KERYX_DEBUG is set."""
-    if not os.environ.get("KERYX_DEBUG"):
-        return
-    try:
-        import time
-        with open(os.path.expanduser("~/keryx-debug.log"), "a") as f:
-            f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
-    except Exception:
-        pass
-
-
 def _natural_key(s: str):
     """Sort key so names sort 'naturally': test2 < test9 < test10 < test20
     (not lexicographic test1, test10, test2)."""
     return [int(t) if t.isdigit() else t.lower()
             for t in re.split(r"(\d+)", s or "")]
+
+
+def _norm_num(s: str) -> str:
+    r"""Normalize a user-entered decimal to the CLI's ``\d+(\.\d+)?`` grammar so
+    the field validator, the fee estimate, and the broadcast all agree:
+    ``.5`` -> ``0.5``, ``5.`` -> ``5``. The amount/fee field validator accepts a
+    leading or trailing dot, but the driver's estimate() silently drops a
+    non-matching fee and send() rejects it outright — which would otherwise show
+    an understated fee and then fail AFTER the user confirmed and entered their
+    password. Normalizing here keeps all three consistent."""
+    s = (s or "").strip()
+    if s.startswith("."):
+        s = "0" + s
+    if s.endswith("."):
+        s = s[:-1]
+    return s
 
 
 def _asset_path(name: str) -> str:
@@ -107,7 +111,6 @@ class MainWindow(QMainWindow):
         self._selected_account_id = ""  # active account's stable hex id (survives reorder)
         self._wallet_id = ""            # open wallet's id (keys the persisted order)
         self._accounts = []             # parsed accounts from `list` (live keryx order)
-        self._account_combo_ids = []    # display-ordered ids in the switcher (rebuild guard)
         self._populating_accounts = False  # guards combo programmatic updates
         self._max_mode = False          # "Max" active → amount auto-tracks the fee
         self._current_address = ""
@@ -302,14 +305,14 @@ class MainWindow(QMainWindow):
                     self.driver._cli_path = chosen
                     path = self.driver.resolve_binary()
             if not path:
-                self.status("keryx-cli not found — set PATH, KERYX_CLI, or --cli-path.")
+                self.status(_t("cli_not_found"))
                 return
         try:
             self.driver.start()
-            self.status(f"keryx-cli ready ({path}). Set a node and connect.")
+            self.status(_t("cli_ready", path=path))
         except Exception as e:  # noqa
-            dialogs._error(self, "Failed to start keryx-cli", str(e))
-            self.status("Failed to start keryx-cli")
+            dialogs._error(self, _t("cli_start_failed"), str(e))
+            self.status(_t("cli_start_failed"))
 
     # ── Screen 1: Connection ─────────────────────────────────────────────────
 
@@ -507,13 +510,10 @@ class MainWindow(QMainWindow):
         # it should be the FIRST in the user's display order (which respects a
         # manual reorder / the pinned main account), not keryx's list order.
         def after_select(_res: CliResult):
-            _dbg(f"after_select: sel_id={self._selected_account_id} "
-                 f"live_idx={self._selected_account_index} cur_addr={self._current_address!r}")
             self._refresh_accounts()
             self._show_address()   # resolves address, then loads explorer history
             self._balance_timer.start()
         def after_list(res: CliResult):
-            _dbg(f"after_list: ok={getattr(res,'ok',None)} wid={self._wallet_id!r}")
             live_idx = 0
             if res.ok and res.output:
                 self._last_list_output = res.output
@@ -744,7 +744,9 @@ class MainWindow(QMainWindow):
         arow = QHBoxLayout(); arow.setContentsMargins(0, 0, 0, 0)
         addrs_btn = QPushButton(_t("addresses_btn"))
         addrs_btn.setToolTip(_t("receive_addresses_title"))
-        addrs_btn.setFixedWidth(110)
+        # Minimum (not fixed) so longer translations aren't clipped — the button
+        # grows to fit its label but never shrinks below the English size.
+        addrs_btn.setMinimumWidth(110)
         addrs_btn.clicked.connect(self._open_addresses_dialog)
         arow.addWidget(addrs_btn); arow.addStretch(1)
         rb.addLayout(arow)
@@ -752,7 +754,8 @@ class MainWindow(QMainWindow):
         # Copy button — full width, above the address (easier than double-clicking
         # a wrapped address, which only selects up to the ':' word boundary).
         copy_btn = QPushButton(_t("copy_address"))
-        copy_btn.clicked.connect(self._copy_address)
+        dialogs.attach_copy(copy_btn, lambda: (self._current_address or "").strip(),
+                            "copy_address")
         rb.addWidget(copy_btn)
         rb.addSpacing(9)   # space above the address (raised 5px, was 14)
         rb.addWidget(self.addr_label)
@@ -826,7 +829,8 @@ class MainWindow(QMainWindow):
         amt_h.setContentsMargins(0, 0, 0, 0); amt_h.setSpacing(6)
         amt_h.addWidget(self.send_amount, 1)
         self.max_btn = QPushButton(_t("max"))
-        self.max_btn.setFixedWidth(56)
+        # Minimum (not fixed) width so longer translations of "Max" aren't clipped.
+        self.max_btn.setMinimumWidth(56)
         self.max_btn.setToolTip(_t("max_tip"))
         self.max_btn.clicked.connect(self._fill_max_amount)
         amt_h.addWidget(self.max_btn)
@@ -986,7 +990,6 @@ class MainWindow(QMainWindow):
         items = [(a["id"], self._account_label(a)) for a in display]
         # set_accounts does not emit signals, so no re-entrancy guard needed.
         self.account_combo.set_accounts(items, self._selected_account_id)
-        self._account_combo_ids = [a["id"] for a in display]
         # The switcher is only useful with more than one account.
         self.account_row.setVisible(len(display) > 1)
 
@@ -1017,7 +1020,6 @@ class MainWindow(QMainWindow):
         from keryx_wallet.core import config
         config.set_account_order(self._wallet_id, ids)
         config.set_order_locked(self._wallet_id, True)
-        self._account_combo_ids = ids
 
     # ── BIP39 passphrase ("payment secret") plumbing ──────────────────────────
     @staticmethod
@@ -1300,21 +1302,6 @@ class MainWindow(QMainWindow):
         else:
             os.execv(sys.executable, [sys.executable] + sys.argv)
 
-    def _copy_address(self):
-        """Copy the current receive address to the clipboard."""
-        addr = (self._current_address or "").strip()
-        if not addr:
-            return
-        from PyQt6.QtWidgets import QApplication
-        QApplication.clipboard().setText(addr)
-        # Brief inline confirmation on the button itself. Always restore the
-        # canonical label (NOT the live text) — otherwise a second click while
-        # it still says "Copied" captures that as the "original" and it sticks.
-        btn = self.sender()
-        if btn is not None:
-            btn.setText(_t("copied"))
-            QTimer.singleShot(1200, lambda b=btn: b.setText(_t("copy_address")))
-
     def _open_addresses_dialog(self):
         """Show ALL of the account's receive addresses (each copyable) with a
         'Generate new address' button. Old addresses are kept — generating a new
@@ -1351,15 +1338,8 @@ class MainWindow(QMainWindow):
                     f"padding:5px; }}")
                 # Plain themed button (matches the main Copy button) so the
                 # label isn't clipped like the fixed-width dialog button was.
-                cp = QPushButton(_t("copy_address"))
-
-                def mk(addr, b):
-                    def do():
-                        QApplication.clipboard().setText(addr)
-                        b.setText(_t("copied"))
-                        QTimer.singleShot(1200, lambda: b.setText(_t("copy_address")))
-                    return do
-                cp.clicked.connect(mk(a, cp))
+                cp = dialogs.attach_copy(QPushButton(_t("copy_address")), a,
+                                         "copy_address")
                 r.addWidget(fld, 1); r.addWidget(cp)
                 rows.addLayout(r)
             rows.addStretch(1)
@@ -1393,8 +1373,6 @@ class MainWindow(QMainWindow):
 
     def _show_address(self):
         def done(res: CliResult):
-            _dbg(f"_show_address.done: ok={getattr(res,'ok',None)} "
-                 f"out={(res.output or '')[:80]!r}")
             if not res.ok:
                 self.addr_label.setText(_t("loading_address"))
                 return
@@ -1402,8 +1380,6 @@ class MainWindow(QMainWindow):
             m = re.search(r"(ker[xy][a-z]*:[0-9a-z]+)", text, re.IGNORECASE)
             addr = m.group(1) if m else ""
             prev_addr = self._current_address
-            _dbg(f"_show_address: addr={addr!r} prev={prev_addr!r} "
-                 f"hist_loading={getattr(self,'_history_loading',None)}")
             self._current_address = addr
             self.addr_label.setText(addr or "(no address)")
             self.addr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1432,7 +1408,7 @@ class MainWindow(QMainWindow):
                 self._load_history()
             else:
                 self.qr_label.clear()
-        self.status("Requesting address…")
+        self.status(_t("requesting_address"))
         self._submit(self.driver.run, done, "address")
 
     @staticmethod
@@ -1559,7 +1535,6 @@ class MainWindow(QMainWindow):
         # Explorer is the sole source of transaction history (queried by address,
         # so it's the true on-chain history regardless of wallet instance).
         addr = self._current_address
-        _dbg(f"_load_history: addr={addr!r} hist_loading={getattr(self,'_history_loading',None)}")
         if not addr:
             self.history_view.setHtml(
                 f"<div style='color:{TOKENS['text_dim']};'>{_t('loading_address')}</div>")
@@ -1568,7 +1543,6 @@ class MainWindow(QMainWindow):
         # reload). Without this, two loads render at different stages and the
         # list visibly bounces between counts.
         if getattr(self, "_history_loading", False):
-            _dbg("_load_history: BLOCKED by _history_loading guard")
             return
         self._history_loading = True
 
@@ -1603,13 +1577,10 @@ class MainWindow(QMainWindow):
             return ("full", full, count)
 
         def done(result):
-            _dbg(f"_load_history.done: load_addr={addr!r} cur={self._current_address!r} "
-                 f"result={(str(result)[:60])!r}")
             # Stale guard: if the user switched accounts while this load was in
             # flight, the active address changed — discard this result so the
             # previous account's txs never render into the current account.
             if addr != self._current_address:
-                _dbg("_load_history.done: STALE — discarded")
                 return
             self._history_loading = False
             if isinstance(result, tuple) and len(result) == 3:
@@ -1840,8 +1811,10 @@ class MainWindow(QMainWindow):
             dialogs._warn(self, _t("not_connected"), _t("connect_before_send"))
             return
         addr = self.send_addr.text().strip()
-        amount = self.send_amount.text().strip()
-        fee = self.send_fee.text().strip()
+        # Normalize '.5'/'5.' so the estimate and the broadcast use the same value
+        # the CLI accepts (the field validator is looser than the CLI grammar).
+        amount = _norm_num(self.send_amount.text())
+        fee = _norm_num(self.send_fee.text())
         if not addr or not amount or not fee:
             dialogs._warn(self, _t("missing_fields"), _t("fields_required"))
             return
@@ -1876,7 +1849,7 @@ class MainWindow(QMainWindow):
         def show_dialog(estimate):
             dlg = SendConfirmDialog(addr, amount, fee, estimate=estimate, parent=self)
             if dlg.exec() != dlg.DialogCode.Accepted:
-                self.status("Send cancelled.")
+                self.status(_t("send_cancelled"))
                 return
             pw = dlg.password()
             # Leaving Max mode now (and stopping its recalc timer) so the field
@@ -1913,6 +1886,10 @@ class MainWindow(QMainWindow):
                         if "insufficient" in blob:
                             dialogs._warn(self, _t("insufficient_funds"),
                                           _t("insufficient_amount_fee"))
+                        elif "passphrase" in blob:
+                            dialogs._warn(self, _t("wrong_passphrase"), "")
+                        elif "wrong password" in blob:
+                            dialogs._warn(self, _t("wrong_password"), "")
                         else:
                             dialogs._error(
                                 self, _t("send_uncertain"),
@@ -1923,11 +1900,11 @@ class MainWindow(QMainWindow):
                         dialogs._info(self, _t("sent"), str(e))
                     except Exception:
                         pass
-            self.status("Broadcasting…")
+            self.status(_t("broadcasting"))
             # Handles the BIP39 "payment password" prompt for passphrase wallets.
             self._run_payment_op(self.driver.send, (addr, amount, fee, pw),
                                  on_result,
-                                 on_cancel=lambda: self.status("Send cancelled."))
+                                 on_cancel=lambda: self.status(_t("send_cancelled")))
 
         def after_estimate(res):
             # A valid fee estimate is REQUIRED to send. If we can't estimate, the
@@ -2064,7 +2041,7 @@ class MainWindow(QMainWindow):
         self.history_view.clear()
         self.send_addr.clear(); self.send_amount.clear(); self.send_fee.clear()
         self._max_mode = False
-        self.status("Wallet closed. Choose a wallet option.")
+        self.status(_t("wallet_closed_choose"))
         self.wallet_choice.setCurrentIndex(0)
         self._populate_wallet_list()
         self.stack.setCurrentWidget(self.wallet_screen)
@@ -2085,13 +2062,13 @@ class MainWindow(QMainWindow):
                 parsed = KeryxCliDriver.parse_export_result(res.output)
                 ExportRevealDialog(parsed.get("mnemonic", ""),
                                    parsed.get("xpub", ""), parent=self).exec()
-                self.status("Recovery phrase exported (shown once).")
+                self.status(_t("recovery_exported"))
             else:
                 dialogs._warn(self, "Export failed",
                                     res.error or "Could not export.")
                 self.status(f"Export failed: {res.error or 'unknown'}")
 
-        self.status("Exporting…")
+        self.status(_t("exporting"))
         self._submit(self.driver.export_mnemonic, done, pw, "")
 
     # ── Consolidate (sweep) ──────────────────────────────────────────────────
@@ -2168,18 +2145,25 @@ class MainWindow(QMainWindow):
                     self._refresh_accounts()
                     self._load_history()
                 else:
-                    dialogs._warn(self, _t("consolidation_failed"),
-                                  res.error or "Sweep did not complete.")
+                    blob = ((getattr(res, "error", "") or "") + " "
+                            + (getattr(res, "output", "") or "")).lower()
+                    if "passphrase" in blob:
+                        dialogs._warn(self, _t("wrong_passphrase"), "")
+                    elif "wrong password" in blob:
+                        dialogs._warn(self, _t("wrong_password"), "")
+                    else:
+                        dialogs._warn(self, _t("consolidation_failed"),
+                                      res.error or _t("consolidation_failed"))
 
-            self.status("Consolidating…")
+            self.status(_t("consolidating"))
             self._run_payment_op(self.driver.sweep, (pw,), swept,
                                  on_cancel=lambda: self.status(""))
 
-        self.status("Reading UTXOs…")
+        self.status(_t("reading_utxos"))
         task = CliRunnable(work)
         task.signals.finished.connect(done)
         task.signals.error.connect(
-            lambda e: dialogs._warn(self, "Could not read UTXOs", str(e)))
+            lambda e: dialogs._warn(self, _t("read_utxos_failed"), str(e)))
         self.pool.start(task)
 
     # ── shutdown ─────────────────────────────────────────────────────────────

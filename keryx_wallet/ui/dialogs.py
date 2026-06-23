@@ -215,6 +215,31 @@ def get_text(parent, title: str, prompt: str, initial: str = ""):
     return "", False
 
 
+def attach_copy(button, source, label_key: str = "copy_address"):
+    """Wire `button` to copy text to the clipboard and briefly show "Copied".
+
+    `source` is the text to copy, or a no-arg callable returning it (use a
+    callable when the value can change between clicks, e.g. the live receive
+    address). After 1.2s the button is restored to `_t(label_key)` — always the
+    canonical label, never the live text, so a second click while it still says
+    "Copied" can't capture that as the label and make it stick.
+
+    Centralizes the copy-with-feedback logic that was duplicated across the
+    receive screen, the addresses dialog, and the mnemonic/export dialogs.
+    """
+    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtCore import QTimer
+
+    def _do():
+        val = source() if callable(source) else source
+        QApplication.clipboard().setText(val or "")
+        button.setText(_t("copied"))
+        QTimer.singleShot(1200, lambda: button.setText(_t(label_key)))
+
+    button.clicked.connect(_do)
+    return button
+
+
 # ── Drop-in wrappers matching QMessageBox.<level>(parent, title, text) ────────
 def _warn(parent, title, text, *args, **kwargs):
     message(parent, title, str(text), "warn")
