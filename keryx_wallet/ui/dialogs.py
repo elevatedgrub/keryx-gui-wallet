@@ -165,15 +165,79 @@ def get_password(parent, title: str, prompt: str):
     row = QHBoxLayout(); row.addStretch(1)
     cancel = _btn(_t("cancel"), primary=False)
     okb = _btn(_t("ok"), primary=True)
+
+    def _accept():
+        # Don't accept an empty password — tell the user instead of doing nothing.
+        if not field.text():
+            message(dlg, _t("supply_password"), "", "warn")
+            field.setFocus()
+            return
+        dlg.accept()
+
     cancel.clicked.connect(dlg.reject)
-    okb.clicked.connect(dlg.accept)
-    field.returnPressed.connect(dlg.accept)
+    okb.clicked.connect(_accept)
+    field.returnPressed.connect(_accept)
     row.addWidget(cancel); row.addWidget(okb)
     v.addLayout(row)
     field.setFocus()
     if dlg.exec() == QDialog.DialogCode.Accepted:
         return field.text(), True
     return "", False
+
+
+def get_text(parent, title: str, prompt: str, initial: str = ""):
+    """Themed single-line text input (visible echo). The prompt is the green
+    heading. Pre-fills `initial` and selects it. Returns (text, ok)."""
+    dlg = QDialog(parent)
+    _frame(dlg, title)
+    v = QVBoxLayout(dlg)
+    v.addWidget(_title_label(prompt, TOKENS["green"]))
+    field = QLineEdit()
+    field.setText(initial)
+    field.setStyleSheet(
+        f"QLineEdit {{ background:{TOKENS['surface_2']}; color:{TOKENS['text']}; "
+        f"border:1px solid {TOKENS['border']}; border-radius:6px; padding:7px 9px; "
+        f"font-family:{MONO}; }}"
+        f"QLineEdit:focus {{ border-color:{TOKENS['green']}; }}")
+    v.addWidget(field)
+    row = QHBoxLayout(); row.addStretch(1)
+    cancel = _btn(_t("cancel"), primary=False)
+    okb = _btn(_t("ok"), primary=True)
+    cancel.clicked.connect(dlg.reject)
+    okb.clicked.connect(dlg.accept)
+    field.returnPressed.connect(dlg.accept)
+    row.addWidget(cancel); row.addWidget(okb)
+    v.addLayout(row)
+    field.setFocus()
+    field.selectAll()
+    if dlg.exec() == QDialog.DialogCode.Accepted:
+        return field.text().strip(), True
+    return "", False
+
+
+def attach_copy(button, source, label_key: str = "copy_address"):
+    """Wire `button` to copy text to the clipboard and briefly show "Copied".
+
+    `source` is the text to copy, or a no-arg callable returning it (use a
+    callable when the value can change between clicks, e.g. the live receive
+    address). After 1.2s the button is restored to `_t(label_key)` — always the
+    canonical label, never the live text, so a second click while it still says
+    "Copied" can't capture that as the label and make it stick.
+
+    Centralizes the copy-with-feedback logic that was duplicated across the
+    receive screen, the addresses dialog, and the mnemonic/export dialogs.
+    """
+    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtCore import QTimer
+
+    def _do():
+        val = source() if callable(source) else source
+        QApplication.clipboard().setText(val or "")
+        button.setText(_t("copied"))
+        QTimer.singleShot(1200, lambda: button.setText(_t(label_key)))
+
+    button.clicked.connect(_do)
+    return button
 
 
 # ── Drop-in wrappers matching QMessageBox.<level>(parent, title, text) ────────

@@ -52,6 +52,99 @@ def set_language(lang: str) -> None:
     save(data)
 
 
+# ── Account display order (per wallet, keyed by wallet id) ───────────────────
+# keryx-cli has no stable account index — `list`/`select` order changes when an
+# account is renamed (it re-appends). We persist a stable display order per
+# wallet so the account dropdown doesn't jump around.
+def get_account_order(wallet_id: str) -> list:
+    if not wallet_id:
+        return []
+    orders = load().get("account_order", {}) or {}
+    val = orders.get(wallet_id, [])
+    return list(val) if isinstance(val, list) else []
+
+
+def set_account_order(wallet_id: str, ids: list) -> None:
+    if not wallet_id:
+        return
+    data = load()
+    orders = data.get("account_order", {})
+    if not isinstance(orders, dict):
+        orders = {}
+    orders[wallet_id] = list(ids)
+    data["account_order"] = orders
+    save(data)
+
+
+def get_has_passphrase(wallet_id: str) -> bool:
+    """Whether this wallet is known to use a BIP39 passphrase (learned the first
+    time an operation hits the 'Enter payment password' prompt)."""
+    if not wallet_id:
+        return False
+    d = load().get("has_passphrase", {}) or {}
+    return bool(d.get(wallet_id, False))
+
+
+def set_has_passphrase(wallet_id: str, value: bool = True) -> None:
+    if not wallet_id:
+        return
+    data = load()
+    d = data.get("has_passphrase", {})
+    if not isinstance(d, dict):
+        d = {}
+    d[wallet_id] = bool(value)
+    data["has_passphrase"] = d
+    save(data)
+
+
+def get_order_locked(wallet_id: str) -> bool:
+    """True once the user has manually reordered this wallet's accounts. A manual
+    order is respected as-is (the automatic main-account pin is not applied)."""
+    if not wallet_id:
+        return False
+    locks = load().get("account_order_locked", {}) or {}
+    return bool(locks.get(wallet_id, False))
+
+
+def set_order_locked(wallet_id: str, locked: bool = True) -> None:
+    if not wallet_id:
+        return
+    data = load()
+    locks = data.get("account_order_locked", {})
+    if not isinstance(locks, dict):
+        locks = {}
+    locks[wallet_id] = bool(locked)
+    data["account_order_locked"] = locks
+    save(data)
+
+
+def get_main_account(wallet_id: str) -> str:
+    """The hex id of the wallet's main account (derivation index 0), if known.
+
+    keryx-cli exposes no stable account index, but a wallet seen with exactly one
+    account must be showing its main account — we record that id so it can be
+    pinned first in the switcher even after it's renamed (which reorders keryx).
+    """
+    if not wallet_id:
+        return ""
+    mains = load().get("main_account", {}) or {}
+    return str(mains.get(wallet_id, "") or "")
+
+
+def set_main_account(wallet_id: str, account_id: str) -> None:
+    if not wallet_id or not account_id:
+        return
+    data = load()
+    mains = data.get("main_account", {})
+    if not isinstance(mains, dict):
+        mains = {}
+    if mains.get(wallet_id) == account_id:
+        return
+    mains[wallet_id] = account_id
+    data["main_account"] = mains
+    save(data)
+
+
 # ── Address book ─────────────────────────────────────────────────────────
 def get_address_book() -> list:
     """Return saved addresses as a list of {"label": str, "address": str}."""

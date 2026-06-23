@@ -102,18 +102,329 @@ _T = {
         "id": "Ganti dompet", "ko": "지갑 전환", "es": "Cambiar cartera",
         "nl": "Wissel portemonnee",
     },
+    "account": {
+        "en": "Account", "ru": "Счёт", "zh": "账户", "id": "Akun",
+        "ko": "계정", "es": "Cuenta", "nl": "Account",
+    },
+    "rename": {
+        "en": "Rename", "ru": "Переименовать", "zh": "重命名", "id": "Ganti nama",
+        "ko": "이름 변경", "es": "Renombrar", "nl": "Hernoemen",
+    },
+    "new_account": {
+        "en": "New account", "ru": "Новый счёт", "zh": "新建账户",
+        "id": "Akun baru", "ko": "새 계정", "es": "Nueva cuenta",
+        "nl": "Nieuw account",
+    },
+    "reorder_hint": {
+        "en": "Drag accounts to reorder", "ru": "Перетащите счета для порядка",
+        "zh": "拖动账户以重新排序", "id": "Seret akun untuk mengurutkan",
+        "ko": "계정을 끌어 순서 변경", "es": "Arrastra las cuentas para reordenar",
+        "nl": "Sleep accounts om te herschikken",
+    },
+    "enter_passphrase_prompt": {
+        "en": "Enter your wallet's BIP39 passphrase",
+        "ru": "Введите парольную фразу BIP39 вашего кошелька",
+        "zh": "输入钱包的 BIP39 口令",
+        "id": "Masukkan frasa sandi BIP39 dompet Anda",
+        "ko": "지갑의 BIP39 암호문을 입력하세요",
+        "es": "Introduce la frase de contraseña BIP39 de tu cartera",
+        "nl": "Voer de BIP39-wachtwoordzin van je portemonnee in",
+    },
+    "create_passphrase_warning": {
+        "en": "Keep your 12-word mnemonic and BIP39 passphrase secure — they "
+              "cannot be recovered after creation. Your BIP39 passphrase will be "
+              "used as a payment secret for transactions.",
+        "ru": "Храните свою фразу из 12 слов и парольную фразу BIP39 в "
+              "безопасности — их нельзя восстановить после создания. Ваша "
+              "парольная фраза BIP39 будет использоваться как платёжный секрет "
+              "для транзакций.",
+        "zh": "请妥善保管您的 12 词助记词和 BIP39 口令——创建后无法恢复。您的 "
+              "BIP39 口令将用作交易的支付密钥。",
+        "id": "Simpan frasa 12 kata dan frasa sandi BIP39 Anda dengan aman — "
+              "keduanya tidak dapat dipulihkan setelah dibuat. Frasa sandi BIP39 "
+              "Anda akan digunakan sebagai rahasia pembayaran untuk transaksi.",
+        "ko": "12단어 니모닉과 BIP39 암호문을 안전하게 보관하세요 — 생성 후에는 "
+              "복구할 수 없습니다. BIP39 암호문은 거래의 결제 비밀로 사용됩니다.",
+        "es": "Guarda de forma segura tu frase de 12 palabras y tu frase de "
+              "contraseña BIP39: no se pueden recuperar tras la creación. Tu "
+              "frase de contraseña BIP39 se usará como secreto de pago para las "
+              "transacciones.",
+        "nl": "Bewaar je 12-woorden mnemonic en BIP39-wachtwoordzin veilig — ze "
+              "kunnen na het aanmaken niet worden hersteld. Je "
+              "BIP39-wachtwoordzin wordt gebruikt als betalingsgeheim voor "
+              "transacties.",
+    },
+    "max": {
+        "en": "Max", "ru": "Макс", "zh": "全部", "id": "Maks",
+        "ko": "최대", "es": "Máx", "nl": "Max",
+    },
+    "max_tip": {
+        "en": "Send the entire balance (amount = balance minus the network fee)",
+        "ru": "Отправить весь баланс (сумма = баланс минус комиссия сети)",
+        "zh": "发送全部余额（金额 = 余额减去网络手续费）",
+        "id": "Kirim seluruh saldo (jumlah = saldo dikurangi biaya jaringan)",
+        "ko": "전체 잔액 보내기 (금액 = 잔액 − 네트워크 수수료)",
+        "es": "Enviar todo el saldo (importe = saldo menos la comisión de red)",
+        "nl": "Verstuur het volledige saldo (bedrag = saldo min netwerkkosten)",
+    },
+    "estimate_unavailable": {
+        "en": "Couldn't estimate the fee. Make sure you're connected, then try "
+              "again.",
+        "ru": "Не удалось рассчитать комиссию. Убедитесь, что вы подключены, и "
+              "повторите попытку.",
+        "zh": "无法估算手续费。请确认已连接后重试。",
+        "id": "Tidak dapat memperkirakan biaya. Pastikan Anda terhubung, lalu "
+              "coba lagi.",
+        "ko": "수수료를 추정할 수 없습니다. 연결되어 있는지 확인 후 다시 "
+              "시도하세요.",
+        "es": "No se pudo estimar la comisión. Asegúrate de estar conectado e "
+              "inténtalo de nuevo.",
+        "nl": "Kon de kosten niet schatten. Controleer of je verbonden bent en "
+              "probeer het opnieuw.",
+    },
+    "insufficient_amount_fee": {
+        "en": "Your total balance can't cover the sending amount plus network "
+              "fees. Try a smaller amount.",
+        "ru": "Вашего общего баланса не хватает на сумму отправки плюс сетевые "
+              "комиссии. Попробуйте меньшую сумму.",
+        "zh": "您的总余额无法支付发送金额加网络手续费。请尝试更小的金额。",
+        "id": "Total saldo Anda tidak cukup untuk jumlah kirim ditambah biaya "
+              "jaringan. Coba jumlah yang lebih kecil.",
+        "ko": "전체 잔액으로 보내는 금액과 네트워크 수수료를 충당할 수 없습니다. "
+              "더 적은 금액으로 시도하세요.",
+        "es": "Tu saldo total no cubre el importe a enviar más las comisiones de "
+              "red. Prueba con un importe menor.",
+        "nl": "Je totale saldo dekt het verzendbedrag plus netwerkkosten niet. "
+              "Probeer een kleiner bedrag.",
+    },
+    "cannot_send": {
+        "en": "Can't send", "ru": "Нельзя отправить", "zh": "无法发送",
+        "id": "Tidak bisa mengirim", "ko": "보낼 수 없음",
+        "es": "No se puede enviar", "nl": "Kan niet verzenden",
+    },
+    "estimate_failed_blocked": {
+        "en": "Couldn't estimate the fee, so the transaction was NOT sent. This "
+              "usually means the amount would leave tiny 'dust' change, or your "
+              "balance is in many small UTXOs that need consolidating first. Try "
+              "the Max button, a different amount, or Consolidate, then resend.",
+        "ru": "Не удалось рассчитать комиссию, поэтому транзакция НЕ отправлена. "
+              "Обычно это значит, что останется крошечная «пыль» или баланс "
+              "состоит из множества мелких UTXO, которые нужно сначала объединить. "
+              "Попробуйте «Макс», другую сумму или «Объединить», затем повторите.",
+        "zh": "无法估算手续费，因此交易未发送。这通常意味着金额会留下极小的“尘埃”"
+              "找零，或余额由许多需先整合的小额 UTXO 组成。请尝试“全部”、其他金额"
+              "或先“整合”，然后重新发送。",
+        "id": "Tidak dapat memperkirakan biaya, jadi transaksi TIDAK dikirim. "
+              "Biasanya ini berarti jumlahnya menyisakan 'debu' kecil, atau saldo "
+              "Anda terdiri dari banyak UTXO kecil yang perlu dikonsolidasikan "
+              "dulu. Coba tombol Maks, jumlah lain, atau Konsolidasi, lalu kirim "
+              "ulang.",
+        "ko": "수수료를 추정할 수 없어 거래를 보내지 않았습니다. 보통 금액이 아주 "
+              "작은 '더스트' 잔돈을 남기거나, 잔액이 먼저 통합해야 하는 작은 UTXO "
+              "여러 개로 이루어진 경우입니다. 최대 버튼, 다른 금액, 또는 통합 후 "
+              "다시 보내세요.",
+        "es": "No se pudo estimar la comisión, así que la transacción NO se "
+              "envió. Suele significar que el importe dejaría 'polvo' diminuto, o "
+              "que tu saldo está en muchos UTXO pequeños que hay que consolidar "
+              "primero. Prueba el botón Máx, otro importe o Consolidar, y reenvía.",
+        "nl": "Kon de kosten niet schatten, dus de transactie is NIET verzonden. "
+              "Meestal betekent dit dat het bedrag kleine 'stof'-wisselgeld "
+              "achterlaat, of dat je saldo uit veel kleine UTXO's bestaat die "
+              "eerst geconsolideerd moeten worden. Probeer Max, een ander bedrag "
+              "of Consolideren, en verstuur opnieuw.",
+    },
+    "supply_password": {
+        "en": "Please supply a password", "ru": "Введите пароль",
+        "zh": "请输入密码", "id": "Harap masukkan kata sandi",
+        "ko": "비밀번호를 입력하세요", "es": "Introduce una contraseña",
+        "nl": "Voer een wachtwoord in",
+    },
+    "addresses_btn": {
+        "en": "Addresses", "ru": "Адреса", "zh": "地址", "id": "Alamat",
+        "ko": "주소", "es": "Direcciones", "nl": "Adressen",
+    },
+    "receive_addresses_title": {
+        "en": "Receive addresses", "ru": "Адреса для получения",
+        "zh": "接收地址", "id": "Alamat penerima", "ko": "수신 주소",
+        "es": "Direcciones de recepción", "nl": "Ontvangstadressen",
+    },
+    "generate_new_address": {
+        "en": "Generate new address", "ru": "Создать новый адрес",
+        "zh": "生成新地址", "id": "Buat alamat baru", "ko": "새 주소 생성",
+        "es": "Generar nueva dirección", "nl": "Nieuw adres genereren",
+    },
+    "addresses_note": {
+        "en": "All addresses below belong to this account and keep receiving — "
+              "generating a new one never disables the old ones.",
+        "ru": "Все адреса ниже принадлежат этому счёту и продолжают принимать "
+              "средства — создание нового не отключает старые.",
+        "zh": "下列所有地址都属于此账户并可继续接收——生成新地址不会停用旧地址。",
+        "id": "Semua alamat di bawah milik akun ini dan tetap menerima — "
+              "membuat yang baru tidak menonaktifkan yang lama.",
+        "ko": "아래 모든 주소는 이 계정의 것이며 계속 수신합니다 — 새 주소를 "
+              "만들어도 기존 주소는 비활성화되지 않습니다.",
+        "es": "Todas las direcciones siguientes pertenecen a esta cuenta y "
+              "siguen recibiendo: generar una nueva no desactiva las anteriores.",
+        "nl": "Alle onderstaande adressen horen bij dit account en blijven "
+              "ontvangen — een nieuw adres maken schakelt de oude niet uit.",
+    },
+    "estimating": {
+        "en": "Estimating fee", "ru": "Расчёт комиссии", "zh": "正在估算手续费",
+        "id": "Memperkirakan biaya", "ko": "수수료 추정 중",
+        "es": "Estimando comisión", "nl": "Kosten schatten",
+    },
+    "broadcasting": {
+        "en": "Broadcasting…", "ru": "Отправка…", "zh": "正在广播…",
+        "id": "Menyiarkan…", "ko": "전송 중…", "es": "Difundiendo…",
+        "nl": "Uitzenden…",
+    },
+    "send_cancelled": {
+        "en": "Send cancelled.", "ru": "Отправка отменена.", "zh": "发送已取消。",
+        "id": "Pengiriman dibatalkan.", "ko": "전송이 취소되었습니다.",
+        "es": "Envío cancelado.", "nl": "Verzending geannuleerd.",
+    },
+    "consolidating": {
+        "en": "Consolidating…", "ru": "Объединение…", "zh": "正在合并…",
+        "id": "Mengonsolidasikan…", "ko": "통합 중…", "es": "Consolidando…",
+        "nl": "Consolideren…",
+    },
+    "reading_utxos": {
+        "en": "Reading UTXOs…", "ru": "Чтение UTXO…", "zh": "正在读取 UTXO…",
+        "id": "Membaca UTXO…", "ko": "UTXO 읽는 중…", "es": "Leyendo UTXOs…",
+        "nl": "UTXO's lezen…",
+    },
+    "exporting": {
+        "en": "Exporting…", "ru": "Экспорт…", "zh": "正在导出…",
+        "id": "Mengekspor…", "ko": "내보내는 중…", "es": "Exportando…",
+        "nl": "Exporteren…",
+    },
+    "requesting_address": {
+        "en": "Requesting address…", "ru": "Запрос адреса…", "zh": "正在请求地址…",
+        "id": "Meminta alamat…", "ko": "주소 요청 중…",
+        "es": "Solicitando dirección…", "nl": "Adres opvragen…",
+    },
+    "wallet_closed_choose": {
+        "en": "Wallet closed. Choose a wallet option.",
+        "ru": "Кошелёк закрыт. Выберите действие с кошельком.",
+        "zh": "钱包已关闭。请选择一个钱包选项。",
+        "id": "Dompet ditutup. Pilih opsi dompet.",
+        "ko": "지갑이 닫혔습니다. 지갑 옵션을 선택하세요.",
+        "es": "Monedero cerrado. Elige una opción de monedero.",
+        "nl": "Portemonnee gesloten. Kies een portemonnee-optie.",
+    },
+    "recovery_exported": {
+        "en": "Recovery phrase exported (shown once).",
+        "ru": "Фраза восстановления экспортирована (показана один раз).",
+        "zh": "助记词已导出（仅显示一次）。",
+        "id": "Frasa pemulihan diekspor (ditampilkan sekali).",
+        "ko": "복구 문구를 내보냈습니다 (한 번만 표시됨).",
+        "es": "Frase de recuperación exportada (se muestra una vez).",
+        "nl": "Herstelzin geëxporteerd (eenmalig getoond).",
+    },
+    "cli_not_found": {
+        "en": "keryx-cli not found — set PATH, KERYX_CLI, or --cli-path.",
+        "ru": "keryx-cli не найден — задайте PATH, KERYX_CLI или --cli-path.",
+        "zh": "未找到 keryx-cli — 请设置 PATH、KERYX_CLI 或 --cli-path。",
+        "id": "keryx-cli tidak ditemukan — atur PATH, KERYX_CLI, atau --cli-path.",
+        "ko": "keryx-cli를 찾을 수 없습니다 — PATH, KERYX_CLI 또는 --cli-path를 설정하세요.",
+        "es": "keryx-cli no encontrado — define PATH, KERYX_CLI o --cli-path.",
+        "nl": "keryx-cli niet gevonden — stel PATH, KERYX_CLI of --cli-path in.",
+    },
+    "cli_ready": {
+        "en": "keryx-cli ready ({path}). Set a node and connect.",
+        "ru": "keryx-cli готов ({path}). Укажите узел и подключитесь.",
+        "zh": "keryx-cli 就绪 ({path})。请设置节点并连接。",
+        "id": "keryx-cli siap ({path}). Atur node dan sambungkan.",
+        "ko": "keryx-cli 준비됨 ({path}). 노드를 설정하고 연결하세요.",
+        "es": "keryx-cli listo ({path}). Configura un nodo y conéctate.",
+        "nl": "keryx-cli gereed ({path}). Stel een node in en verbind.",
+    },
+    "cli_start_failed": {
+        "en": "Failed to start keryx-cli",
+        "ru": "Не удалось запустить keryx-cli",
+        "zh": "无法启动 keryx-cli",
+        "id": "Gagal memulai keryx-cli",
+        "ko": "keryx-cli 시작 실패",
+        "es": "No se pudo iniciar keryx-cli",
+        "nl": "Kan keryx-cli niet starten",
+    },
+    "name_required_rule": {
+        "en": "Name is required: 1-64 of letters, digits, _ -.",
+        "ru": "Требуется имя: 1–64 символа из букв, цифр, _ -.",
+        "zh": "需要名称：1-64 个字母、数字、_ -。",
+        "id": "Nama diperlukan: 1-64 huruf, angka, _ -.",
+        "ko": "이름 필요: 문자, 숫자, _ - 1~64자.",
+        "es": "Se requiere nombre: 1-64 de letras, dígitos, _ -.",
+        "nl": "Naam vereist: 1-64 letters, cijfers, _ -.",
+    },
+    "account_name_prompt": {
+        "en": "Account name", "ru": "Имя счёта", "zh": "账户名称",
+        "id": "Nama akun", "ko": "계정 이름", "es": "Nombre de cuenta",
+        "nl": "Accountnaam",
+    },
+    "account_recovery_warning": {
+        "en": "Additional accounts do NOT auto-restore from your recovery "
+              "phrase. To recover them you must recreate each account in the "
+              "same order. Keep important funds in the main account. Continue?",
+        "ru": "Дополнительные счета НЕ восстанавливаются автоматически из "
+              "вашей фразы. Чтобы восстановить их, нужно заново создать каждый "
+              "счёт в том же порядке. Храните важные средства на основном "
+              "счёте. Продолжить?",
+        "zh": "附加账户不会从助记词自动恢复。要恢复它们，您必须按相同顺序"
+              "重新创建每个账户。请将重要资金保留在主账户中。是否继续？",
+        "id": "Akun tambahan TIDAK dipulihkan otomatis dari frasa pemulihan "
+              "Anda. Untuk memulihkannya, buat ulang setiap akun dengan urutan "
+              "yang sama. Simpan dana penting di akun utama. Lanjutkan?",
+        "ko": "추가 계정은 복구 문구로 자동 복원되지 않습니다. 복구하려면 "
+              "동일한 순서로 각 계정을 다시 만들어야 합니다. 중요한 자금은 "
+              "메인 계정에 보관하세요. 계속할까요?",
+        "es": "Las cuentas adicionales NO se restauran automáticamente desde tu "
+              "frase de recuperación. Para recuperarlas debes recrear cada "
+              "cuenta en el mismo orden. Mantén los fondos importantes en la "
+              "cuenta principal. ¿Continuar?",
+        "nl": "Extra accounts worden NIET automatisch hersteld vanuit je "
+              "herstelzin. Om ze te herstellen moet je elk account in dezelfde "
+              "volgorde opnieuw aanmaken. Houd belangrijke tegoeden op het "
+              "hoofdaccount. Doorgaan?",
+    },
+    "account_created": {
+        "en": "Account created", "ru": "Счёт создан", "zh": "账户已创建",
+        "id": "Akun dibuat", "ko": "계정이 생성됨", "es": "Cuenta creada",
+        "nl": "Account aangemaakt",
+    },
+    "create_account_failed": {
+        "en": "Could not create account", "ru": "Не удалось создать счёт",
+        "zh": "无法创建账户", "id": "Gagal membuat akun",
+        "ko": "계정을 만들 수 없음", "es": "No se pudo crear la cuenta",
+        "nl": "Kon account niet aanmaken",
+    },
+    "rename_prompt": {
+        "en": "New account name", "ru": "Новое имя счёта",
+        "zh": "新账户名称", "id": "Nama akun baru", "ko": "새 계정 이름",
+        "es": "Nuevo nombre de cuenta", "nl": "Nieuwe accountnaam",
+    },
+    "account_renamed": {
+        "en": "Account renamed", "ru": "Счёт переименован", "zh": "账户已重命名",
+        "id": "Akun diganti namanya", "ko": "계정 이름이 변경됨",
+        "es": "Cuenta renombrada", "nl": "Account hernoemd",
+    },
+    "rename_failed": {
+        "en": "Rename failed", "ru": "Не удалось переименовать",
+        "zh": "重命名失败", "id": "Gagal mengganti nama", "ko": "이름 변경 실패",
+        "es": "Error al renombrar", "nl": "Hernoemen mislukt",
+    },
     "consolidate": {
         "en": "Consolidate", "ru": "Объединить", "zh": "整合", "id": "Konsolidasi",
         "ko": "통합", "es": "Consolidar", "nl": "Consolideren",
     },
     "consolidate_tip": {
-        "en": "Consolidating high UTXO counts can speed up future transactions",
-        "ru": "Объединение большого числа UTXO ускоряет будущие транзакции",
-        "zh": "整合大量 UTXO 可以加快未来的交易",
-        "id": "Mengonsolidasikan UTXO yang banyak dapat mempercepat transaksi",
-        "ko": "많은 UTXO를 통합하면 향후 거래 속도가 빨라집니다",
-        "es": "Consolidar muchos UTXO puede acelerar las transacciones futuras",
-        "nl": "Het consolideren van veel UTXO's versnelt toekomstige transacties",
+        "en": "Combine many tiny UTXOs into fewer so sends don't hit mass errors.",
+        "ru": "Объединяет мелкие UTXO в крупные, чтобы отправки не вызывали ошибок массы.",
+        "zh": "把许多小额 UTXO 合并成少量，避免发送时出现质量错误。",
+        "id": "Gabungkan banyak UTXO kecil jadi sedikit agar pengiriman tidak gagal.",
+        "ko": "작은 UTXO를 적게 합쳐 전송 시 질량 오류를 방지합니다.",
+        "es": "Combina muchos UTXO pequeños en pocos para que los envíos no fallen.",
+        "nl": "Voeg veel kleine UTXO's samen zodat verzendingen niet falen.",
     },
     "export_phrase": {
         "en": "Export phrase", "ru": "Экспорт фразы", "zh": "导出助记词",
@@ -140,6 +451,11 @@ _T = {
     "copied": {
         "en": "Copied ✓", "ru": "Скопировано ✓", "zh": "已复制 ✓",
         "id": "Disalin ✓", "ko": "복사됨 ✓", "es": "Copiado ✓", "nl": "Gekopieerd ✓",
+    },
+    "copy_phrase": {
+        "en": "Copy phrase", "ru": "Копировать фразу", "zh": "复制助记词",
+        "id": "Salin frasa", "ko": "구문 복사", "es": "Copiar frase",
+        "nl": "Zin kopiëren",
     },
     "transactions": {
         "en": "Transactions", "ru": "Транзакции", "zh": "交易", "id": "Transaksi",
@@ -185,6 +501,33 @@ _T = {
         "en": "Wrong password.", "ru": "Неверный пароль.", "zh": "密码错误。",
         "id": "Kata sandi salah.", "ko": "비밀번호가 틀렸습니다.",
         "es": "Contraseña incorrecta.", "nl": "Verkeerd wachtwoord.",
+    },
+    "read_utxos_failed": {
+        "en": "Could not read UTXOs",
+        "ru": "Не удалось прочитать UTXO",
+        "zh": "无法读取 UTXO",
+        "id": "Tidak dapat membaca UTXO",
+        "ko": "UTXO를 읽을 수 없습니다",
+        "es": "No se pudieron leer los UTXOs",
+        "nl": "Kan UTXO's niet lezen",
+    },
+    "wrong_password_or_passphrase": {
+        "en": "Wrong wallet password or BIP39 passphrase.",
+        "ru": "Неверный пароль кошелька или парольная фраза BIP39.",
+        "zh": "钱包密码或 BIP39 口令错误。",
+        "id": "Kata sandi dompet atau frasa sandi BIP39 salah.",
+        "ko": "지갑 비밀번호 또는 BIP39 암호문이 틀렸습니다.",
+        "es": "Contraseña del monedero o frase BIP39 incorrecta.",
+        "nl": "Verkeerd portemonnee-wachtwoord of BIP39-wachtwoordzin.",
+    },
+    "wrong_passphrase": {
+        "en": "Wrong BIP39 passphrase.",
+        "ru": "Неверная парольная фраза BIP39.",
+        "zh": "BIP39 口令错误。",
+        "id": "Frasa sandi BIP39 salah.",
+        "ko": "BIP39 암호문이 틀렸습니다.",
+        "es": "Frase de contraseña BIP39 incorrecta.",
+        "nl": "Verkeerde BIP39-wachtwoordzin.",
     },
     # ── Consolidate dialog ───────────────────────────────────────────────
     "consolidate_title": {
@@ -651,13 +994,13 @@ _T = {
         "nl": "optioneel antiphishing-woord/zin",
     },
     "ph_bip39_create": {
-        "en": "optional — REQUIRED to spend/recover if set",
-        "ru": "необязательно — ОБЯЗАТЕЛЬНО для траты/восстановления, если задано",
-        "zh": "可选 — 一旦设置，花费/恢复时必填",
-        "id": "opsional — WAJIB untuk membelanjakan/memulihkan jika diatur",
-        "ko": "선택 사항 — 설정 시 사용/복구에 필수",
-        "es": "opcional — OBLIGATORIA para gastar/recuperar si se establece",
-        "nl": "optioneel — VEREIST om uit te geven/herstellen indien ingesteld",
+        "en": "optional — REQUIRED to spend if set",
+        "ru": "необязательно — ОБЯЗАТЕЛЬНО для траты, если задано",
+        "zh": "可选 — 一旦设置，花费时必填",
+        "id": "opsional — WAJIB untuk membelanjakan jika diatur",
+        "ko": "선택 사항 — 설정 시 사용에 필수",
+        "es": "opcional — OBLIGATORIA para gastar si se establece",
+        "nl": "optioneel — VEREIST om uit te geven indien ingesteld",
     },
     "ph_bip39_import": {
         "en": "only if the original wallet used one",
@@ -726,9 +1069,9 @@ _T = {
         "nl": "Ik heb mijn herstelzin opgeschreven en veilig opgeborgen.",
     },
     "ph_amount": {
-        "en": "amount (KRX)", "ru": "сумма (KRX)", "zh": "金额 (KRX)",
-        "id": "jumlah (KRX)", "ko": "금액 (KRX)", "es": "cantidad (KRX)",
-        "nl": "bedrag (KRX)",
+        "en": "amount", "ru": "сумма", "zh": "金额",
+        "id": "jumlah", "ko": "금액", "es": "cantidad",
+        "nl": "bedrag",
     },
     "connected": {
         "en": "Connected", "ru": "Подключено", "zh": "已连接",
@@ -750,10 +1093,10 @@ _T = {
         "es": "Fondos insuficientes", "nl": "Onvoldoende saldo",
     },
     "ph_priority_fee": {
-        "en": "priority fee (KRX)", "ru": "приоритетная комиссия (KRX)",
-        "zh": "优先手续费 (KRX)", "id": "biaya prioritas (KRX)",
-        "ko": "우선 수수료 (KRX)", "es": "comisión prioritaria (KRX)",
-        "nl": "prioriteitskosten (KRX)",
+        "en": "priority fee", "ru": "приоритетная комиссия",
+        "zh": "优先手续费", "id": "biaya prioritas",
+        "ko": "우선 수수료", "es": "comisión prioritaria",
+        "nl": "prioriteitskosten",
     },
     "address_book": {
         "en": "Address book", "ru": "Адресная книга", "zh": "地址簿",

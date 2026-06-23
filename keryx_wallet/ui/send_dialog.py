@@ -19,11 +19,12 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QFormLayout, QFrame, QWidget, QMessageBox,
+    QFormLayout, QFrame, QWidget,
 )
 from PyQt6.QtCore import Qt
 from keryx_wallet.core.i18n import t as _t
 from keryx_wallet.ui.theme import WARNING_LABEL
+from keryx_wallet.ui import dialogs
 
 
 class SendConfirmDialog(QDialog):
@@ -108,8 +109,8 @@ class SendConfirmDialog(QDialog):
     def _submit_password(self):
         pw = self._pw_edit.text()
         if not pw:
-            QMessageBox.warning(self, "Password required",
-                                "Enter your wallet password to broadcast.")
+            dialogs.message(self, _t("supply_password"), "", "warn")
+            self._pw_edit.setFocus()
             return
         self._password_value = pw
         self.accept()

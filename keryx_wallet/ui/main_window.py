@@ -38,6 +38,29 @@ import os
 import sys
 
 
+def _natural_key(s: str):
+    """Sort key so names sort 'naturally': test2 < test9 < test10 < test20
+    (not lexicographic test1, test10, test2)."""
+    return [int(t) if t.isdigit() else t.lower()
+            for t in re.split(r"(\d+)", s or "")]
+
+
+def _norm_num(s: str) -> str:
+    r"""Normalize a user-entered decimal to the CLI's ``\d+(\.\d+)?`` grammar so
+    the field validator, the fee estimate, and the broadcast all agree:
+    ``.5`` -> ``0.5``, ``5.`` -> ``5``. The amount/fee field validator accepts a
+    leading or trailing dot, but the driver's estimate() silently drops a
+    non-matching fee and send() rejects it outright — which would otherwise show
+    an understated fee and then fail AFTER the user confirmed and entered their
+    password. Normalizing here keeps all three consistent."""
+    s = (s or "").strip()
+    if s.startswith("."):
+        s = "0" + s
+    if s.endswith("."):
+        s = s[:-1]
+    return s
+
+
 def _asset_path(name: str) -> str:
     """Locate a bundled asset both from source and from a PyInstaller bundle."""
     candidates = []
@@ -84,6 +107,12 @@ class MainWindow(QMainWindow):
         self._connected = False
         self._wallet_open = False
         self._wallet_name = ""
+        self._selected_account_index = 0  # active account's LIVE keryx select index
+        self._selected_account_id = ""  # active account's stable hex id (survives reorder)
+        self._wallet_id = ""            # open wallet's id (keys the persisted order)
+        self._accounts = []             # parsed accounts from `list` (live keryx order)
+        self._populating_accounts = False  # guards combo programmatic updates
+        self._max_mode = False          # "Max" active → amount auto-tracks the fee
         self._current_address = ""
         self._krx_price = None          # cached KRX/USDT price
         self._last_list_output = ""     # cached `list` output for re-rendering
@@ -95,6 +124,11 @@ class MainWindow(QMainWindow):
         self._balance_timer = QTimer(self)
         self._balance_timer.setInterval(10_000)
         self._balance_timer.timeout.connect(self._auto_refresh_balance)
+        # Debounce for re-computing the Max amount when the priority fee changes.
+        self._max_recalc = QTimer(self)
+        self._max_recalc.setSingleShot(True)
+        self._max_recalc.setInterval(350)
+        self._max_recalc.timeout.connect(self._fill_max_amount)
 
         self.stack = QStackedWidget()
 
@@ -271,14 +305,14 @@ class MainWindow(QMainWindow):
                     self.driver._cli_path = chosen
                     path = self.driver.resolve_binary()
             if not path:
-                self.status("keryx-cli not found — set PATH, KERYX_CLI, or --cli-path.")
+                self.status(_t("cli_not_found"))
                 return
         try:
             self.driver.start()
-            self.status(f"keryx-cli ready ({path}). Set a node and connect.")
+            self.status(_t("cli_ready", path=path))
         except Exception as e:  # noqa
-            dialogs._error(self, "Failed to start keryx-cli", str(e))
-            self.status("Failed to start keryx-cli")
+            dialogs._error(self, _t("cli_start_failed"), str(e))
+            self.status(_t("cli_start_failed"))
 
     # ── Screen 1: Connection ─────────────────────────────────────────────────
 
@@ -441,10 +475,11 @@ class MainWindow(QMainWindow):
         wdir = os.path.expanduser("~/.keryx-labs")
         names = []
         try:
-            for path in sorted(glob.glob(os.path.join(wdir, "*.wallet"))):
+            for path in glob.glob(os.path.join(wdir, "*.wallet")):
                 names.append(os.path.splitext(os.path.basename(path))[0])
         except Exception:
             pass
+        names.sort(key=_natural_key)   # test2 < test9 < test10 (not lexicographic)
         self.open_combo.addItems(names)
         if prev:
             self.open_combo.setCurrentText(prev)
@@ -454,12 +489,53 @@ class MainWindow(QMainWindow):
     def _enter_dashboard(self, wallet_name: str):
         self._wallet_open = True
         self._wallet_name = wallet_name
+        self._selected_account_index = 0
+        self._selected_account_id = ""   # reconciled to the main account on first list
+        self._wallet_id = ""
+        # Fresh history state every open — otherwise a load left in flight when a
+        # previous wallet was closed leaves _history_loading stuck True (its done
+        # bails on the stale-address guard without clearing it), which would block
+        # _load_history here ("history not loading after switch + reopen").
+        self._history_loading = False
+        self._explorer_txs = None
+        self._last_history_raw = ""
+        self._last_history_html = None   # else the render dedup-skips and the
+        self._tx_page = 0                # view stays stuck on "Loading…"
         self.stack.setCurrentWidget(self.dash_screen)
         self.history_view.setHtml(
             f"<div style='color:{TOKENS['text_dim']};'>{_t('loading_transactions')}</div>")
-        self._refresh_accounts()
-        self._show_address()   # resolves address, then loads explorer history
-        self._balance_timer.start()
+        # keryx-cli will NOT spend (send/estimate) until an account is actively
+        # selected. With 2+ accounts `wallet open` selects NONE, so estimate/send
+        # fail with "please select an account". We must select an account on open;
+        # it should be the FIRST in the user's display order (which respects a
+        # manual reorder / the pinned main account), not keryx's list order.
+        def after_select(_res: CliResult):
+            self._refresh_accounts()
+            self._show_address()   # resolves address, then loads explorer history
+            self._balance_timer.start()
+        def after_list(res: CliResult):
+            live_idx = 0
+            if res.ok and res.output:
+                self._last_list_output = res.output
+                self._wallet_id = self._parse_wallet_id(res.output) or self._wallet_id
+                accts = self._parse_accounts(res.output)
+                if accts:
+                    self._accounts = accts
+                    if len(accts) == 1 and self._wallet_id:
+                        from keryx_wallet.core import config
+                        config.set_main_account(self._wallet_id, accts[0]["id"])
+                    first = self._display_order(accts)[0]
+                    self._selected_account_id = first["id"]
+                    live_idx = next((a["index"] for a in accts
+                                     if a["id"] == first["id"]), 0)
+                    self._selected_account_index = live_idx
+            self._submit(self.driver.select_account, after_select, live_idx)
+        def after_mute(_res: CliResult):
+            # `list` first so we know the display order, THEN select its first
+            # account in the CLI so the active account matches what's shown.
+            self._submit(self.driver.run, after_list, "list")
+        # Mute async notifications FIRST (they desync the REPL).
+        self._submit(self.driver.set_muted, after_mute, True)
 
     def _do_open_wallet(self):
         name = self.open_combo.currentText().strip()
@@ -505,9 +581,9 @@ class MainWindow(QMainWindow):
         if self._wallet_exists(vals["name"]):
             dialogs._warn(self, _t("wallet_name_exists"), "")
             return
-
         def done(res: CliResult):
             if res.ok:
+                self.create_name.clear()   # don't leave the name in the field
                 parsed = KeryxCliDriver.parse_create_result(res.output)
                 MnemonicBackupDialog(parsed.get("mnemonic", ""),
                                      parsed.get("address", ""), parent=self).exec()
@@ -548,6 +624,7 @@ class MainWindow(QMainWindow):
 
         def done(res: CliResult):
             if res.ok:
+                self.import_name.clear()   # don't leave the name in the field
                 self.status(f'Wallet "{vals["name"]}" imported.')
                 self._auto_open_after(vals["name"], vals["password"])
             else:
@@ -590,6 +667,9 @@ class MainWindow(QMainWindow):
         switch_btn = QPushButton(_t("switch_wallet"))
         switch_btn.clicked.connect(self._switch_wallet)
         top.addWidget(switch_btn)
+        new_acct_btn = QPushButton(_t("new_account"))
+        new_acct_btn.clicked.connect(self._do_new_account)
+        top.addWidget(new_acct_btn)
         consolidate_btn = QPushButton(_t("consolidate"))
         consolidate_btn.setToolTip(_t("consolidate_tip"))
         consolidate_btn.clicked.connect(self._do_consolidate)
@@ -598,6 +678,27 @@ class MainWindow(QMainWindow):
         export_btn.clicked.connect(self._do_export)
         top.addWidget(export_btn)
         v.addLayout(top)
+
+        # Account switcher — only shown when the wallet has 2+ accounts. keryx-cli
+        # needs an account actively selected to spend; changing this re-selects
+        # the account and refreshes balance/address/history for it.
+        self.account_row = QWidget()
+        ar = QHBoxLayout(self.account_row)
+        ar.setContentsMargins(0, 0, 0, 0)
+        ar.addWidget(QLabel(_t("account") + ":"))
+        # Custom dropdown whose popup list is drag-reorderable (a QComboBox popup
+        # can't be — it intercepts the drag). See account_selector.py.
+        from keryx_wallet.ui.account_selector import AccountSelector
+        self.account_combo = AccountSelector()
+        self.account_combo.setToolTip(_t("reorder_hint"))
+        self.account_combo.activated.connect(self._on_account_activated)
+        self.account_combo.reordered.connect(self._on_account_reordered)
+        ar.addWidget(self.account_combo, 1)
+        self.rename_btn = QPushButton(_t("rename"))
+        self.rename_btn.clicked.connect(self._do_rename_account)
+        ar.addWidget(self.rename_btn)
+        self.account_row.setVisible(False)
+        v.addWidget(self.account_row)
 
         # Balance — "wallet : balance", large modern font
         bal_box = QGroupBox(_t("balance"))
@@ -639,15 +740,30 @@ class MainWindow(QMainWindow):
         self.addr_label.setFixedHeight(48)  # room for up to ~2 lines
         self.addr_label.setSizePolicy(QSizePolicy.Policy.Expanding,
                                       QSizePolicy.Policy.Fixed)
-        rb.addWidget(self.addr_label)
-        # Copy button — easier and more reliable than double-clicking a wrapped
-        # address (a double-click only selects up to the ':' word boundary).
+        # "Addresses" button ABOVE the address (left-aligned, fixed width).
+        arow = QHBoxLayout(); arow.setContentsMargins(0, 0, 0, 0)
+        addrs_btn = QPushButton(_t("addresses_btn"))
+        addrs_btn.setToolTip(_t("receive_addresses_title"))
+        # Minimum (not fixed) so longer translations aren't clipped — the button
+        # grows to fit its label but never shrinks below the English size.
+        addrs_btn.setMinimumWidth(110)
+        addrs_btn.clicked.connect(self._open_addresses_dialog)
+        arow.addWidget(addrs_btn); arow.addStretch(1)
+        rb.addLayout(arow)
+        rb.addSpacing(5)   # nudge Copy button + address down 5px
+        # Copy button — full width, above the address (easier than double-clicking
+        # a wrapped address, which only selects up to the ':' word boundary).
         copy_btn = QPushButton(_t("copy_address"))
-        copy_btn.clicked.connect(self._copy_address)
+        dialogs.attach_copy(copy_btn, lambda: (self._current_address or "").strip(),
+                            "copy_address")
         rb.addWidget(copy_btn)
+        rb.addSpacing(9)   # space above the address (raised 5px, was 14)
+        rb.addWidget(self.addr_label)
+        # QR is the focal point of the receive panel — center it in the whole
+        # section (the convention in most wallets), not under a single button.
         self.qr_label = QLabel()
         self.qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.qr_label.setContentsMargins(0, 25, 0, 0)  # 25px lower
+        self.qr_label.setContentsMargins(0, 0, 0, 0)  # raised 25px total (was 25)
         rb.addWidget(self.qr_label)
         rb.addStretch(1)
         rs.addWidget(recv_box, 1)
@@ -664,6 +780,20 @@ class MainWindow(QMainWindow):
         self.send_addr.focusOutEvent = _focus_out
         self.send_amount = QLineEdit(); self.send_amount.setPlaceholderText(_t("ph_amount"))
         self.send_fee = QLineEdit(); self.send_fee.setPlaceholderText(_t("ph_priority_fee"))
+        # Keryx amounts are capped at 8 decimal places (1 KRX = 1e8 sompi).
+        from PyQt6.QtGui import QRegularExpressionValidator
+        from PyQt6.QtCore import QRegularExpression
+        _amt_validator = QRegularExpressionValidator(
+            QRegularExpression(r"^\d*(\.\d{0,8})?$"))
+        self.send_amount.setValidator(_amt_validator)
+        self.send_fee.setValidator(_amt_validator)
+        # Manually editing the amount exits "Max mode"; changing the priority fee
+        # while in Max mode re-computes the amount (debounced) so it stays = the
+        # full balance minus the (now larger) fee.
+        self.send_amount.textEdited.connect(
+            lambda _t: setattr(self, "_max_mode", False))
+        self.send_fee.textChanged.connect(
+            lambda _t: self._max_recalc.start() if self._max_mode else None)
         # Destination row: address field + an address-book button to its right.
         to_row = QWidget()
         to_h = QHBoxLayout(to_row)
@@ -694,7 +824,17 @@ class MainWindow(QMainWindow):
         self.addrbook_btn.clicked.connect(self._open_address_book)
         to_h.addWidget(self.addrbook_btn)
         sb.addRow(_t("to"), to_row)
-        sb.addRow(_t("amount"), self.send_amount)
+        # Amount row + a "Max" button that fills in balance minus the real fee.
+        amt_row = QWidget(); amt_h = QHBoxLayout(amt_row)
+        amt_h.setContentsMargins(0, 0, 0, 0); amt_h.setSpacing(6)
+        amt_h.addWidget(self.send_amount, 1)
+        self.max_btn = QPushButton(_t("max"))
+        # Minimum (not fixed) width so longer translations of "Max" aren't clipped.
+        self.max_btn.setMinimumWidth(56)
+        self.max_btn.setToolTip(_t("max_tip"))
+        self.max_btn.clicked.connect(self._fill_max_amount)
+        amt_h.addWidget(self.max_btn)
+        sb.addRow(_t("amount"), amt_row)
         sb.addRow(_t("fee"), self.send_fee)
         send_btn = QPushButton(_t("send_btn"))
         send_btn.clicked.connect(self._do_send)
@@ -767,11 +907,291 @@ class MainWindow(QMainWindow):
         self.dash_screen = scroll
         self.stack.addWidget(scroll)
 
+    @staticmethod
+    def _parse_accounts(output: str):
+        """
+        Parse `list` output into ordered account dicts. The position in the list
+        IS the keryx-cli select index (verified). Format per account:
+            • [<hexid>]: <bal> KRX   <n> UTXOs         (account 0 — no name)
+            • <name> [<hexid>]: <bal> KRX   <n> UTXOs  (named accounts)
+              keryx:<address>                          (on the next line)
+        """
+        accounts = []
+        lines = (output or "").splitlines()
+        for i, line in enumerate(lines):
+            s = line.strip().lstrip("•").strip()
+            m = re.match(r"^(.*?)\[([0-9a-f]+)\]:\s*(.+?)\s*KRX", s)
+            if not m:
+                continue
+            name = m.group(1).strip()
+            acct_id = m.group(2)
+            bal = m.group(3).strip()
+            addr = ""
+            for j in range(i + 1, min(i + 3, len(lines))):
+                am = re.search(r"(ker[xy][a-z]*:[0-9a-z]+)", lines[j], re.IGNORECASE)
+                if am:
+                    addr = am.group(1)
+                    break
+            accounts.append({
+                "index": len(accounts),
+                "id": acct_id,
+                "name": name,
+                "balance": bal,
+                "address": addr,
+            })
+        return accounts
+
+    @staticmethod
+    def _parse_wallet_id(output: str) -> str:
+        # The wallet id is a bare "• <hex>" line (>=12 hex, no brackets/colon);
+        # account ids appear as "[<hex>]:". Used to key the persisted order.
+        for line in (output or "").splitlines():
+            m = re.match(r"^\s*•\s*([0-9a-f]{12,})\s*$", line.strip())
+            if m:
+                return m.group(1)
+        return ""
+
+    def _display_order(self, accounts):
+        """
+        Return accounts in a STABLE display order. keryx-cli reorders its own
+        list when an account is renamed, so we persist the order per wallet
+        (frozen on first sight; new accounts appended) and keep using it. Each
+        account keeps its live keryx `index` for selection.
+        """
+        from keryx_wallet.core import config
+        by_id = {a["id"]: a for a in accounts}
+        stored = config.get_account_order(self._wallet_id) if self._wallet_id else []
+        ordered = [by_id[i] for i in stored if i in by_id]
+        seen = {a["id"] for a in ordered}
+        ordered.extend(a for a in accounts if a["id"] not in seen)  # new → end
+        # Pin the known main account (derivation index 0) to the very front, even
+        # if it was renamed (which makes keryx re-append it) — UNLESS the user has
+        # manually reordered, in which case their order is respected as-is.
+        locked = config.get_order_locked(self._wallet_id) if self._wallet_id else False
+        main_id = config.get_main_account(self._wallet_id) if self._wallet_id else ""
+        if main_id and main_id in by_id and not locked:
+            ordered = [by_id[main_id]] + [a for a in ordered if a["id"] != main_id]
+        new_ids = [a["id"] for a in ordered]
+        if self._wallet_id and new_ids != stored:
+            config.set_account_order(self._wallet_id, new_ids)
+        return ordered
+
+    def _account_label(self, acct: dict) -> str:
+        # An unnamed account shows just its ID (no placeholder name).
+        name = acct.get("name")
+        bal = acct.get("balance", "")
+        if name:
+            return f"{name} [{acct['id']}] — {bal} KRX"
+        return f"[{acct['id']}] — {bal} KRX"
+
+    def _populate_account_combo(self, display):
+        if not hasattr(self, "account_combo"):
+            return
+        items = [(a["id"], self._account_label(a)) for a in display]
+        # set_accounts does not emit signals, so no re-entrancy guard needed.
+        self.account_combo.set_accounts(items, self._selected_account_id)
+        # The switcher is only useful with more than one account.
+        self.account_row.setVisible(len(display) > 1)
+
+    def _on_account_activated(self, sel_id: str):
+        if not sel_id or sel_id == self._selected_account_id:
+            return
+        # Map the chosen account id to its LIVE keryx select index.
+        live = next((a["index"] for a in self._accounts if a["id"] == sel_id), None)
+        if live is None:
+            return
+        self._selected_account_id = sel_id
+        self._selected_account_index = live
+
+        def done(_res: CliResult):
+            # Re-render balance for the now-active account and refresh its
+            # address (which in turn reloads explorer history).
+            if self._last_list_output:
+                self._update_balance_display(self._last_list_output)
+            self._show_address()
+        self.status(_t("account") + f" → {sel_id}")
+        self._submit(self.driver.select_account, done, live)
+
+    def _on_account_reordered(self, ids: list):
+        """User drag-reordered the dropdown list. Persist + lock the new order."""
+        ids = [i for i in ids if i]
+        if not ids or not self._wallet_id:
+            return
+        from keryx_wallet.core import config
+        config.set_account_order(self._wallet_id, ids)
+        config.set_order_locked(self._wallet_id, True)
+
+    # ── BIP39 passphrase ("payment secret") plumbing ──────────────────────────
+    @staticmethod
+    def _payment_needed(res) -> bool:
+        """True if a driver op failed because the wallet wants its BIP39
+        passphrase (the 'Enter payment password' prompt)."""
+        blob = ((getattr(res, "error", "") or "") + " "
+                + (getattr(res, "output", "") or "")).lower()
+        return ("payment secret is required" in blob
+                or "enter payment password" in blob)
+
+    def _ask_passphrase(self):
+        pp, ok = dialogs.get_password(
+            self, _t("bip39_passphrase"), _t("enter_passphrase_prompt"))
+        return pp if ok else None
+
+    def _run_payment_op(self, op_fn, base_args, on_result, on_cancel=None):
+        """Run a payment-secret-capable driver op (send/sweep/create_account).
+        `base_args` is the positional args BEFORE payment_secret. For a known
+        passphrase wallet we ask upfront; otherwise we try without, and if the
+        CLI asks for the payment password we record it, prompt, and retry. Normal
+        wallets are never asked.
+
+        NOTE: keryx-cli prompts for the wallet password AND (for a passphrase
+        wallet) the payment password before it validates either — it does not
+        reject a wrong wallet password before the payment prompt. So we cannot
+        report a wrong wallet password before collecting the passphrase; a failed
+        attempt is reported as "Wrong wallet password or BIP39 passphrase."
+        Asking the passphrase upfront keeps it to a single CLI round-trip."""
+        from keryx_wallet.core import config
+
+        def run(secret):
+            def cb(res):
+                def handle():
+                    if (not getattr(res, "ok", False)) and self._payment_needed(res):
+                        if self._wallet_id:
+                            config.set_has_passphrase(self._wallet_id, True)
+                        pp = self._ask_passphrase()
+                        if pp is None:
+                            if on_cancel:
+                                on_cancel()
+                            return
+                        run(pp)
+                        return
+                    on_result(res)
+                # Defer so any just-closed modal is gone before we open another.
+                QTimer.singleShot(0, handle)
+            self._submit(op_fn, cb, *base_args, secret)
+
+        if self._wallet_id and config.get_has_passphrase(self._wallet_id):
+            pp = self._ask_passphrase()
+            if pp is None:
+                if on_cancel:
+                    on_cancel()
+                return
+            run(pp)
+        else:
+            run("")
+
+    def _do_new_account(self):
+        if not self._wallet_open:
+            return
+        # Show the recovery caveat FIRST (red) — additional bip32 accounts don't
+        # auto-restore from the seed; recovery is manual recreation in order.
+        if not dialogs.confirm(self, _t("new_account"),
+                               _t("account_recovery_warning"), danger=True):
+            return
+        name, ok = dialogs.get_text(self, _t("new_account"),
+                                    _t("account_name_prompt"))
+        if not ok:   # cancelled; an empty name is allowed (unnamed account)
+            return
+        pw, ok = dialogs.get_password(self, "", _t("enter_password"))
+        if not ok:
+            return
+
+        # Remember which accounts existed BEFORE the create so we can identify the
+        # new one by diff — robust even if the "account created" line won't parse.
+        prev_ids = {a["id"] for a in self._accounts}
+
+        def done(res: CliResult):
+            if res.ok:
+                parsed = KeryxCliDriver.parse_created_account(res.output)
+                self.status(_t("account_created"))
+
+                def after_refresh(r2: CliResult):
+                    new_id = parsed.get("id") if parsed else None
+                    if r2.ok and r2.output:
+                        self._last_list_output = r2.output
+                        accts = self._parse_accounts(r2.output)
+                        # The CLI auto-selects the newly created account; find the
+                        # id that wasn't there before and select it (fall back to
+                        # the parsed id only if the diff is inconclusive).
+                        added = [a["id"] for a in accts if a["id"] not in prev_ids]
+                        if added:
+                            new_id = added[0]
+                        if new_id:
+                            self._selected_account_id = new_id
+                        self._update_balance_display(r2.output)
+                        self._show_address()   # now matches the selected account
+                    detail = f"[{new_id}]" if new_id else ""
+                    dialogs.message(self, _t("account_created"), detail, "info")
+
+                self._submit(self.driver.run, after_refresh, "list")
+                self._refresh_price()
+            else:
+                dialogs._warn(self, _t("create_account_failed"),
+                              res.error or _t("create_account_failed"))
+                self.status(_t("create_account_failed"))
+
+        self.status(_t("new_account") + "…")
+        # create_account signature: (name, password, acct_type, payment_secret).
+        self._run_payment_op(self.driver.create_account, (name, pw, "bip32"),
+                             done, on_cancel=lambda: self.status(""))
+
+    def _do_rename_account(self):
+        idx = self._selected_account_index
+        if idx < 0 or idx >= len(self._accounts):
+            return
+        cur = self._accounts[idx]
+        cur_name = cur.get("name") or ""
+        new_name, ok = dialogs.get_text(
+            self, _t("rename"), _t("rename_prompt"), cur_name)
+        # An empty name is allowed — it clears the name. Only bail on cancel or
+        # when nothing actually changed.
+        if not ok or new_name == cur_name:
+            return
+        pw, ok = dialogs.get_password(self, "", _t("enter_password"))
+        if not ok:
+            return
+
+        def done(res: CliResult):
+            if res.ok:
+                self.status(_t("account_renamed"))
+                self._refresh_accounts()   # repopulates the switcher with the new name
+                old_label = cur_name or f"[{cur['id']}]"
+                dialogs.message(self, _t("account_renamed"),
+                                f"{old_label} → {new_name}", "info")
+            else:
+                dialogs._warn(self, _t("rename_failed"),
+                              res.error or _t("rename_failed"))
+                self.status(_t("rename_failed"))
+
+        self.status(_t("rename") + "…")
+        self._submit(self.driver.rename_account, done, idx, new_name, pw)
+
     def _update_balance_display(self, output: str):
+        # Parse all accounts and (re)populate the switcher.
+        self._wallet_id = self._parse_wallet_id(output) or self._wallet_id
+        accounts = self._parse_accounts(output)
         bal = ""
-        m = re.search(r"\[[0-9a-f]+\]:\s*(.+?)\s*KRX", output or "", re.IGNORECASE)
-        if m:
-            bal = m.group(1).strip()
+        if accounts:
+            self._accounts = accounts
+            # A wallet seen with exactly one account is showing its main account
+            # (derivation index 0) — record it so it can be pinned first later.
+            if len(accounts) == 1 and self._wallet_id:
+                from keryx_wallet.core import config
+                config.set_main_account(self._wallet_id, accounts[0]["id"])
+            display = self._display_order(accounts)
+            ids = [a["id"] for a in accounts]
+            # Reconcile the active account BY ID — keryx reorders its list when an
+            # account is renamed, so the live index alone isn't stable. When the
+            # selection is unknown, default to the FIRST account in the user's
+            # display order (not keryx's list order).
+            if self._selected_account_id not in ids:
+                self._selected_account_id = display[0]["id"]
+            self._selected_account_index = ids.index(self._selected_account_id)
+            self._populate_account_combo(display)
+            bal = accounts[self._selected_account_index]["balance"]
+        else:
+            m = re.search(r"\[[0-9a-f]+\]:\s*(.+?)\s*KRX", output or "", re.IGNORECASE)
+            if m:
+                bal = m.group(1).strip()
         if not bal or bal.upper() == "N/A":
             self.balance_label.setText(f"{bal or '—'} KRX")
             return
@@ -905,19 +1325,74 @@ class MainWindow(QMainWindow):
         else:
             os.execv(sys.executable, [sys.executable] + sys.argv)
 
-    def _copy_address(self):
-        """Copy the current receive address to the clipboard."""
-        addr = (self._current_address or "").strip()
-        if not addr:
+    def _open_addresses_dialog(self):
+        """Show ALL of the account's receive addresses (each copyable) with a
+        'Generate new address' button. Old addresses are kept — generating a new
+        one only appends and changes the default shown on the dashboard."""
+        if not self._wallet_open:
             return
-        from PyQt6.QtWidgets import QApplication
-        QApplication.clipboard().setText(addr)
-        # Brief inline confirmation on the button itself.
-        btn = self.sender()
-        if btn is not None:
-            orig = btn.text()
-            btn.setText(_t("copied"))
-            QTimer.singleShot(1200, lambda: btn.setText(orig))
+
+        def build(addresses):
+            from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                                         QScrollArea, QWidget, QLineEdit, QApplication,
+                                         QPushButton)
+            from keryx_wallet.ui.theme import TOKENS, MONO
+            from keryx_wallet.ui.dialogs import _btn
+            dlg = QDialog(self); dlg.setModal(True); dlg.setMinimumWidth(600)
+            dlg.setStyleSheet(f"QDialog {{ background:{TOKENS['bg']}; }}")
+            v = QVBoxLayout(dlg)
+            title = QLabel(_t("receive_addresses_title"))
+            title.setStyleSheet(
+                f"color:{TOKENS['green']}; font-weight:700; font-size:15px;")
+            v.addWidget(title)
+            note = QLabel(_t("addresses_note")); note.setWordWrap(True)
+            note.setStyleSheet(f"color:{TOKENS['text_dim']}; font-size:12px;")
+            v.addWidget(note)
+            scroll = QScrollArea(); scroll.setWidgetResizable(True)
+            scroll.setMinimumHeight(220)
+            inner = QWidget(); rows = QVBoxLayout(inner)
+            for a in addresses:
+                r = QHBoxLayout()
+                fld = QLineEdit(a); fld.setReadOnly(True); fld.setCursorPosition(0)
+                fld.setStyleSheet(
+                    f"QLineEdit {{ background:{TOKENS['surface_2']}; "
+                    f"color:{TOKENS['green']}; font-family:{MONO}; "
+                    f"border:1px solid {TOKENS['border']}; border-radius:5px; "
+                    f"padding:5px; }}")
+                # Plain themed button (matches the main Copy button) so the
+                # label isn't clipped like the fixed-width dialog button was.
+                cp = dialogs.attach_copy(QPushButton(_t("copy_address")), a,
+                                         "copy_address")
+                r.addWidget(fld, 1); r.addWidget(cp)
+                rows.addLayout(r)
+            rows.addStretch(1)
+            scroll.setWidget(inner); v.addWidget(scroll)
+            brow = QHBoxLayout()
+            gen = _btn(_t("generate_new_address"), primary=True)
+            closeb = _btn(_t("ok"), primary=False)
+
+            def on_gen():
+                def done(res):
+                    if getattr(res, "ok", False):
+                        dlg.accept()
+                        self._show_address()   # default shown is now the new one
+                        QTimer.singleShot(0, self._open_addresses_dialog)  # reopen fresh
+                    else:
+                        dialogs._warn(self, _t("generate_new_address"),
+                                      getattr(res, "error", "") or "")
+                self._submit(self.driver.new_address, done)
+            gen.clicked.connect(on_gen)
+            closeb.clicked.connect(dlg.accept)
+            brow.addWidget(gen); brow.addStretch(1); brow.addWidget(closeb)
+            v.addLayout(brow)
+            dlg.exec()
+
+        self.status(_t("receive_addresses_title") + "…")
+        self._submit(
+            self.driver.account_details,
+            lambda res: build(KeryxCliDriver.parse_receive_addresses(
+                getattr(res, "output", "") or "")),
+            self._selected_account_index)
 
     def _show_address(self):
         def done(res: CliResult):
@@ -927,10 +1402,25 @@ class MainWindow(QMainWindow):
             text = (res.output or "").strip()
             m = re.search(r"(ker[xy][a-z]*:[0-9a-z]+)", text, re.IGNORECASE)
             addr = m.group(1) if m else ""
+            prev_addr = self._current_address
             self._current_address = addr
             self.addr_label.setText(addr or "(no address)")
             self.addr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             if addr:
+                if addr != prev_addr:
+                    # Account/address changed: discard the previous account's
+                    # history so an in-flight load for it can't render here, and
+                    # show a fresh loading state. _load_history's stale-address
+                    # guard drops any late results for the old account.
+                    self._explorer_txs = None
+                    self._explorer_total = None
+                    self._tx_page = 0
+                    self._last_history_raw = ""
+                    self._last_history_html = None  # don't dedup-skip the re-render
+                    self._history_loading = False
+                    self.history_view.setHtml(
+                        f"<div style='color:{TOKENS['text_dim']};'>"
+                        f"{_t('loading_transactions')}</div>")
                 # QR 50% smaller (240 -> 120), centered under the address.
                 pix = address_qr_pixmap(addr, size=120)
                 if pix:
@@ -941,7 +1431,7 @@ class MainWindow(QMainWindow):
                 self._load_history()
             else:
                 self.qr_label.clear()
-        self.status("Requesting address…")
+        self.status(_t("requesting_address"))
         self._submit(self.driver.run, done, "address")
 
     @staticmethod
@@ -1110,6 +1600,11 @@ class MainWindow(QMainWindow):
             return ("full", full, count)
 
         def done(result):
+            # Stale guard: if the user switched accounts while this load was in
+            # flight, the active address changed — discard this result so the
+            # previous account's txs never render into the current account.
+            if addr != self._current_address:
+                return
             self._history_loading = False
             if isinstance(result, tuple) and len(result) == 3:
                 mode, data, count = result
@@ -1140,6 +1635,8 @@ class MainWindow(QMainWindow):
                     "Could not reach the explorer. Transactions unavailable.</div>")
 
         def failed(_e):
+            if addr != self._current_address:
+                return
             self._history_loading = False
             if not cached:
                 self.history_view.setHtml(
@@ -1337,8 +1834,10 @@ class MainWindow(QMainWindow):
             dialogs._warn(self, _t("not_connected"), _t("connect_before_send"))
             return
         addr = self.send_addr.text().strip()
-        amount = self.send_amount.text().strip()
-        fee = self.send_fee.text().strip()
+        # Normalize '.5'/'5.' so the estimate and the broadcast use the same value
+        # the CLI accepts (the field validator is looser than the CLI grammar).
+        amount = _norm_num(self.send_amount.text())
+        fee = _norm_num(self.send_fee.text())
         if not addr or not amount or not fee:
             dialogs._warn(self, _t("missing_fields"), _t("fields_required"))
             return
@@ -1373,68 +1872,189 @@ class MainWindow(QMainWindow):
         def show_dialog(estimate):
             dlg = SendConfirmDialog(addr, amount, fee, estimate=estimate, parent=self)
             if dlg.exec() != dlg.DialogCode.Accepted:
-                self.status("Send cancelled.")
+                self.status(_t("send_cancelled"))
                 return
             pw = dlg.password()
+            # Leaving Max mode now (and stopping its recalc timer) so the field
+            # clears after the send don't trigger a stale estimate → spurious
+            # "couldn't estimate" / "insufficient funds" AFTER the send.
+            self._max_mode = False
+            self._max_recalc.stop()
 
-            def sent(res: CliResult):
-                def show_result():
-                    try:
-                        if getattr(res, "ok", False):
-                            parsed = KeryxCliDriver.parse_send_result(
-                                getattr(res, "output", "")) or {}
-                            if parsed:
-                                dialogs._info(
-                                    self, _t("sent"),
-                                    f"{_t('amount')} {parsed.get('amount','?')} KRX\n"
-                                    f"{_t('fee')} {parsed.get('fees','?')} KRX\n"
-                                    f"{_t('total')} {parsed.get('total','?')} KRX")
-                            else:
-                                dialogs._info(self, _t("sent"),
-                                              getattr(res, "output", "") or "")
-                            self.send_addr.clear()
-                            self.send_amount.clear()
-                            self.send_fee.clear()
-                            self._refresh_accounts()
-                            self._load_history()
+            def on_result(res):
+                # _run_payment_op already deferred this via singleShot, so it's
+                # safe to open modals here.
+                try:
+                    if getattr(res, "ok", False):
+                        parsed = KeryxCliDriver.parse_send_result(
+                            getattr(res, "output", "")) or {}
+                        if parsed:
+                            dialogs._info(
+                                self, _t("sent"),
+                                f"{_t('amount')} {parsed.get('amount','?')} KRX\n"
+                                f"{_t('fee')} {parsed.get('fees','?')} KRX\n"
+                                f"{_t('total')} {parsed.get('total','?')} KRX")
+                        else:
+                            dialogs._info(self, _t("sent"),
+                                          getattr(res, "output", "") or "")
+                        self.send_addr.clear()
+                        self.send_amount.clear()
+                        self.send_fee.clear()
+                        self._max_mode = False
+                        self._refresh_accounts()
+                        self._load_history()
+                    else:
+                        blob = ((getattr(res, "error", "") or "") + " "
+                                + (getattr(res, "output", "") or "")).lower()
+                        if "insufficient" in blob:
+                            dialogs._warn(self, _t("insufficient_funds"),
+                                          _t("insufficient_amount_fee"))
+                        elif "passphrase" in blob:
+                            dialogs._warn(self, _t("wrong_password_or_passphrase"), "")
+                        elif "wrong password" in blob:
+                            dialogs._warn(self, _t("wrong_password"), "")
                         else:
                             dialogs._error(
                                 self, _t("send_uncertain"),
                                 (getattr(res, "error", "") or "") + "\n\n" +
                                 (getattr(res, "output", "") or ""))
-                    except Exception as e:
-                        try:
-                            dialogs._info(self, _t("sent"), str(e))
-                        except Exception:
-                            pass
-                # Defer to the next event-loop turn so the (now-closing) send
-                # confirm dialog is fully torn down before we open another modal
-                # — opening a modal from within a closing modal's accept() chain
-                # can hard-crash Qt on some platforms.
-                QTimer.singleShot(0, show_result)
-            self.status("Broadcasting…")
-            self._submit(self.driver.send, sent, addr, amount, fee, pw)
+                except Exception as e:
+                    try:
+                        dialogs._info(self, _t("sent"), str(e))
+                    except Exception:
+                        pass
+            self.status(_t("broadcasting"))
+            # Handles the BIP39 "payment password" prompt for passphrase wallets.
+            self._run_payment_op(self.driver.send, (addr, amount, fee, pw),
+                                 on_result,
+                                 on_cancel=lambda: self.status(_t("send_cancelled")))
 
         def after_estimate(res):
+            # A valid fee estimate is REQUIRED to send. If we can't estimate, the
+            # send would just fail (mass-calc error / partial compound / stale
+            # balance), so block it here with a clear reason instead of letting
+            # the user broadcast a doomed transaction.
             est = None
             try:
                 if res and getattr(res, "ok", False):
-                    est = KeryxCliDriver.parse_send_result(res.output)
+                    est = KeryxCliDriver.parse_estimate_result(res.output)
             except Exception:
                 est = None
-            show_dialog(est)
+            if est:
+                show_dialog(est)
+                return
+            self.status("")
+            blob = ""
+            if res:
+                blob = ((getattr(res, "error", "") or "") + " "
+                        + (getattr(res, "output", "") or "")).lower()
+            if "insufficient" in blob:
+                dialogs._warn(self, _t("insufficient_funds"),
+                              _t("insufficient_amount_fee"))
+            elif "mass" in blob:
+                # Tx can't be built for this amount (dust change, or too many
+                # tiny UTXOs needing consolidation first).
+                dialogs._warn(self, _t("cannot_send"), _t("estimate_failed_blocked"))
+            else:
+                dialogs._warn(self, _t("cannot_send"), _t("estimate_failed_blocked"))
 
-        # Skip the (unverified) estimate pre-step and just show the confirm
-        # dialog. The CLI reports the real fee/total after broadcast; we show
-        # those in the completion dialog.
-        show_dialog(None)
+        # Fetch a (non-broadcasting) fee estimate so the confirm dialog can show
+        # the fee and amount+fee total BEFORE the user signs. If it's
+        # unavailable, after_estimate falls back to showing the dialog without it.
+        self.status(_t("estimating") + "…")
+        self._submit(self.driver.estimate, after_estimate, amount, fee)
+
+    def _fill_max_amount(self):
+        """Fill the amount with the precise maximum = balance − real network fee.
+        The fee is dynamic (depends on how many UTXOs are spent), so we estimate
+        it for a near-full send and subtract it."""
+        # Guard: a queued recalc can fire after the user left the dashboard (e.g.
+        # Switch Wallet). Bail silently so no phantom prompt pops on other screens.
+        if not self._wallet_open or self.stack.currentWidget() is not self.dash_screen:
+            return
+        bal = getattr(self, "_balance_krx", None)
+        if not isinstance(bal, (int, float)) or bal <= 0:
+            dialogs._warn(self, _t("insufficient_funds"), "")
+            return
+        fee_field = self.send_fee.text().strip()
+        pf = fee_field if re.fullmatch(r"\d+(\.\d+)?", fee_field or "") else "0"
+        # Probe to learn the fee. Leave a FIXED ~2 KRX gross buffer (not a
+        # percentage): a percentage buffer lands in the dust zone when it's near
+        # the fee (e.g. 2% of 33 KRX ≈ 0.66 ≈ the 0.6 fee → ~0.06 dust change →
+        # "Mass calculation error"). A ~2 KRX buffer leaves safe change while
+        # still spending (near) all UTXOs.
+        # Leave a buffer that's the larger of 2 KRX or 5% of the balance, so the
+        # probe can afford the fee even on a big multi-UTXO wallet (a fixed 2 KRX
+        # buffer fails when the all-UTXO fee exceeds it → "couldn't estimate").
+        buffer = max(2.0, bal * 0.05)
+        probe = (bal - buffer) if bal > buffer else bal * 0.5
+        probe_s = f"{probe:.8f}".rstrip("0").rstrip(".")
+
+        def fmt(sompi):
+            return f"{sompi / 1e8:.8f}".rstrip("0").rstrip(".")
+
+        def set_amount(sompi):
+            self.send_amount.setText(fmt(sompi))
+            self._max_mode = True   # keep amount tracking the fee as it changes
+            self.status("")
+
+        def done(res):
+            # Stale result: the user may have left the dashboard before the
+            # estimate returned — don't pop a prompt on another screen.
+            if not self._wallet_open or self.stack.currentWidget() is not self.dash_screen:
+                return
+            est = (KeryxCliDriver.parse_estimate_result(getattr(res, "output", "") or "")
+                   if getattr(res, "ok", False) else None)
+            if not est:
+                self.status("")
+                dialogs._warn(self, _t("estimate_unavailable"), "")
+                return
+            try:
+                fee_val = float(est.get("fees", "0"))
+            except Exception:
+                fee_val = 0.0
+            # Integer sompi so there's no float drift (1 KRX = 1e8 sompi).
+            exact_sompi = round(bal * 1e8) - round(fee_val * 1e8)
+            if exact_sompi <= 0:
+                dialogs._warn(self, _t("insufficient_funds"),
+                              _t("insufficient_amount_fee"))
+                return
+            # Try the EXACT full drain (zero change). It only works when balance −
+            # fee is a value keryx-cli's float-based amount parser can represent;
+            # for "ugly" 8-decimal balances it can't (off by ~1 sompi → dust). So
+            # we verify with an estimate and, if it won't drain cleanly, fall back
+            # to leaving a small safe change (0.2 KRX, well above the dust limit).
+            def after_verify(res2):
+                ok = (getattr(res2, "ok", False)
+                      and KeryxCliDriver.parse_estimate_result(
+                          getattr(res2, "output", "") or "") is not None)
+                if ok:
+                    set_amount(exact_sompi)          # full drain
+                else:
+                    # Exact drain isn't representable for this balance/fee. A
+                    # change output must clear the storage-mass minimum (~0.15 KRX
+                    # verified — 0.1 fails), so leave 0.2 KRX for margin.
+                    safe = exact_sompi - 20_000_000  # leave 0.2 KRX change
+                    if safe <= 0:
+                        dialogs._warn(self, _t("insufficient_funds"),
+                                      _t("insufficient_amount_fee"))
+                        self.status("")
+                        return
+                    set_amount(safe)
+            self._submit(self.driver.estimate, after_verify, fmt(exact_sompi), pf)
+
+        self.status(_t("estimating") + "…")
+        self._submit(self.driver.estimate, done, probe_s, pf)
 
     def _switch_wallet(self):
         """Close the open wallet and return to the Wallet Options screen."""
         self._balance_timer.stop()
+        self._max_mode = False
+        self._max_recalc.stop()   # cancel any pending Max recalc (no phantom prompt)
         self._wallet_open = False
         self._wallet_name = ""
         self._current_address = ""
+        self._history_loading = False   # don't leave a load flag stuck for next open
         # Ask the CLI to close the wallet (best-effort; ignore result).
         self._submit(self.driver.run, lambda res: None, "close")
         # Reset dashboard display
@@ -1443,7 +2063,8 @@ class MainWindow(QMainWindow):
         self.qr_label.clear()
         self.history_view.clear()
         self.send_addr.clear(); self.send_amount.clear(); self.send_fee.clear()
-        self.status("Wallet closed. Choose a wallet option.")
+        self._max_mode = False
+        self.status(_t("wallet_closed_choose"))
         self.wallet_choice.setCurrentIndex(0)
         self._populate_wallet_list()
         self.stack.setCurrentWidget(self.wallet_screen)
@@ -1464,14 +2085,14 @@ class MainWindow(QMainWindow):
                 parsed = KeryxCliDriver.parse_export_result(res.output)
                 ExportRevealDialog(parsed.get("mnemonic", ""),
                                    parsed.get("xpub", ""), parent=self).exec()
-                self.status("Recovery phrase exported (shown once).")
+                self.status(_t("recovery_exported"))
             else:
                 dialogs._warn(self, "Export failed",
                                     res.error or "Could not export.")
                 self.status(f"Export failed: {res.error or 'unknown'}")
 
-        self.status("Exporting…")
-        self._submit(self.driver.export_mnemonic, done, pw)
+        self.status(_t("exporting"))
+        self._submit(self.driver.export_mnemonic, done, pw, "")
 
     # ── Consolidate (sweep) ──────────────────────────────────────────────────
 
@@ -1547,17 +2168,25 @@ class MainWindow(QMainWindow):
                     self._refresh_accounts()
                     self._load_history()
                 else:
-                    dialogs._warn(self, _t("consolidation_failed"),
-                                  res.error or "Sweep did not complete.")
+                    blob = ((getattr(res, "error", "") or "") + " "
+                            + (getattr(res, "output", "") or "")).lower()
+                    if "passphrase" in blob:
+                        dialogs._warn(self, _t("wrong_password_or_passphrase"), "")
+                    elif "wrong password" in blob:
+                        dialogs._warn(self, _t("wrong_password"), "")
+                    else:
+                        dialogs._warn(self, _t("consolidation_failed"),
+                                      res.error or _t("consolidation_failed"))
 
-            self.status("Consolidating…")
-            self._submit(self.driver.sweep, swept, pw)
+            self.status(_t("consolidating"))
+            self._run_payment_op(self.driver.sweep, (pw,), swept,
+                                 on_cancel=lambda: self.status(""))
 
-        self.status("Reading UTXOs…")
+        self.status(_t("reading_utxos"))
         task = CliRunnable(work)
         task.signals.finished.connect(done)
         task.signals.error.connect(
-            lambda e: dialogs._warn(self, "Could not read UTXOs", str(e)))
+            lambda e: dialogs._warn(self, _t("read_utxos_failed"), str(e)))
         self.pool.start(task)
 
     # ── shutdown ─────────────────────────────────────────────────────────────
