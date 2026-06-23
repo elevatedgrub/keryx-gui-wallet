@@ -1426,7 +1426,7 @@ class MainWindow(QMainWindow):
                 if pix:
                     self.qr_label.setPixmap(pix)
                 else:
-                    self.qr_label.setText("(install qrcode + Pillow for QR)")
+                    self.qr_label.setText("(install qrcode for QR)")
                 # Now that we have the address, load explorer history.
                 self._load_history()
             else:
