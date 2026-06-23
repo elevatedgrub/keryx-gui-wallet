@@ -197,6 +197,42 @@ _T = {
         "nl": "Je totale saldo dekt het verzendbedrag plus netwerkkosten niet. "
               "Probeer een kleiner bedrag.",
     },
+    "cannot_send": {
+        "en": "Can't send", "ru": "Нельзя отправить", "zh": "无法发送",
+        "id": "Tidak bisa mengirim", "ko": "보낼 수 없음",
+        "es": "No se puede enviar", "nl": "Kan niet verzenden",
+    },
+    "estimate_failed_blocked": {
+        "en": "Couldn't estimate the fee, so the transaction was NOT sent. This "
+              "usually means the amount would leave tiny 'dust' change, or your "
+              "balance is in many small UTXOs that need consolidating first. Try "
+              "the Max button, a different amount, or Consolidate, then resend.",
+        "ru": "Не удалось рассчитать комиссию, поэтому транзакция НЕ отправлена. "
+              "Обычно это значит, что останется крошечная «пыль» или баланс "
+              "состоит из множества мелких UTXO, которые нужно сначала объединить. "
+              "Попробуйте «Макс», другую сумму или «Объединить», затем повторите.",
+        "zh": "无法估算手续费，因此交易未发送。这通常意味着金额会留下极小的“尘埃”"
+              "找零，或余额由许多需先整合的小额 UTXO 组成。请尝试“全部”、其他金额"
+              "或先“整合”，然后重新发送。",
+        "id": "Tidak dapat memperkirakan biaya, jadi transaksi TIDAK dikirim. "
+              "Biasanya ini berarti jumlahnya menyisakan 'debu' kecil, atau saldo "
+              "Anda terdiri dari banyak UTXO kecil yang perlu dikonsolidasikan "
+              "dulu. Coba tombol Maks, jumlah lain, atau Konsolidasi, lalu kirim "
+              "ulang.",
+        "ko": "수수료를 추정할 수 없어 거래를 보내지 않았습니다. 보통 금액이 아주 "
+              "작은 '더스트' 잔돈을 남기거나, 잔액이 먼저 통합해야 하는 작은 UTXO "
+              "여러 개로 이루어진 경우입니다. 최대 버튼, 다른 금액, 또는 통합 후 "
+              "다시 보내세요.",
+        "es": "No se pudo estimar la comisión, así que la transacción NO se "
+              "envió. Suele significar que el importe dejaría 'polvo' diminuto, o "
+              "que tu saldo está en muchos UTXO pequeños que hay que consolidar "
+              "primero. Prueba el botón Máx, otro importe o Consolidar, y reenvía.",
+        "nl": "Kon de kosten niet schatten, dus de transactie is NIET verzonden. "
+              "Meestal betekent dit dat het bedrag kleine 'stof'-wisselgeld "
+              "achterlaat, of dat je saldo uit veel kleine UTXO's bestaat die "
+              "eerst geconsolideerd moeten worden. Probeer Max, een ander bedrag "
+              "of Consolideren, en verstuur opnieuw.",
+    },
     "supply_password": {
         "en": "Please supply a password", "ru": "Введите пароль",
         "zh": "请输入密码", "id": "Harap masukkan kata sandi",
@@ -298,13 +334,13 @@ _T = {
         "ko": "통합", "es": "Consolidar", "nl": "Consolideren",
     },
     "consolidate_tip": {
-        "en": "Consolidating high UTXO counts can speed up future transactions",
-        "ru": "Объединение большого числа UTXO ускоряет будущие транзакции",
-        "zh": "整合大量 UTXO 可以加快未来的交易",
-        "id": "Mengonsolidasikan UTXO yang banyak dapat mempercepat transaksi",
-        "ko": "많은 UTXO를 통합하면 향후 거래 속도가 빨라집니다",
-        "es": "Consolidar muchos UTXO puede acelerar las transacciones futuras",
-        "nl": "Het consolideren van veel UTXO's versnelt toekomstige transacties",
+        "en": "Combine many tiny UTXOs into fewer so sends don't hit mass errors.",
+        "ru": "Объединяет мелкие UTXO в крупные, чтобы отправки не вызывали ошибок массы.",
+        "zh": "把许多小额 UTXO 合并成少量，避免发送时出现质量错误。",
+        "id": "Gabungkan banyak UTXO kecil jadi sedikit agar pengiriman tidak gagal.",
+        "ko": "작은 UTXO를 적게 합쳐 전송 시 질량 오류를 방지합니다.",
+        "es": "Combina muchos UTXO pequeños en pocos para que los envíos no fallen.",
+        "nl": "Voeg veel kleine UTXO's samen zodat verzendingen niet falen.",
     },
     "export_phrase": {
         "en": "Export phrase", "ru": "Экспорт фразы", "zh": "导出助记词",
@@ -922,9 +958,9 @@ _T = {
         "nl": "Ik heb mijn herstelzin opgeschreven en veilig opgeborgen.",
     },
     "ph_amount": {
-        "en": "amount (KRX)", "ru": "сумма (KRX)", "zh": "金额 (KRX)",
-        "id": "jumlah (KRX)", "ko": "금액 (KRX)", "es": "cantidad (KRX)",
-        "nl": "bedrag (KRX)",
+        "en": "amount", "ru": "сумма", "zh": "金额",
+        "id": "jumlah", "ko": "금액", "es": "cantidad",
+        "nl": "bedrag",
     },
     "connected": {
         "en": "Connected", "ru": "Подключено", "zh": "已连接",
@@ -946,10 +982,10 @@ _T = {
         "es": "Fondos insuficientes", "nl": "Onvoldoende saldo",
     },
     "ph_priority_fee": {
-        "en": "priority fee (KRX)", "ru": "приоритетная комиссия (KRX)",
-        "zh": "优先手续费 (KRX)", "id": "biaya prioritas (KRX)",
-        "ko": "우선 수수료 (KRX)", "es": "comisión prioritaria (KRX)",
-        "nl": "prioriteitskosten (KRX)",
+        "en": "priority fee", "ru": "приоритетная комиссия",
+        "zh": "优先手续费", "id": "biaya prioritas",
+        "ko": "우선 수수료", "es": "comisión prioritaria",
+        "nl": "prioriteitskosten",
     },
     "address_book": {
         "en": "Address book", "ru": "Адресная книга", "zh": "地址簿",

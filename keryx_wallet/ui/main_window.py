@@ -748,18 +748,19 @@ class MainWindow(QMainWindow):
         addrs_btn.clicked.connect(self._open_addresses_dialog)
         arow.addWidget(addrs_btn); arow.addStretch(1)
         rb.addLayout(arow)
+        rb.addSpacing(5)   # nudge Copy button + address down 5px
         # Copy button — full width, above the address (easier than double-clicking
         # a wrapped address, which only selects up to the ':' word boundary).
         copy_btn = QPushButton(_t("copy_address"))
         copy_btn.clicked.connect(self._copy_address)
         rb.addWidget(copy_btn)
-        rb.addSpacing(14)   # drop the address down a bit below the Copy button
+        rb.addSpacing(9)   # space above the address (raised 5px, was 14)
         rb.addWidget(self.addr_label)
         # QR is the focal point of the receive panel — center it in the whole
         # section (the convention in most wallets), not under a single button.
         self.qr_label = QLabel()
         self.qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.qr_label.setContentsMargins(0, 15, 0, 0)  # raised 10px total (was 25)
+        self.qr_label.setContentsMargins(0, 0, 0, 0)  # raised 25px total (was 25)
         rb.addWidget(self.qr_label)
         rb.addStretch(1)
         rs.addWidget(recv_box, 1)
@@ -1929,24 +1930,33 @@ class MainWindow(QMainWindow):
                                  on_cancel=lambda: self.status("Send cancelled."))
 
         def after_estimate(res):
+            # A valid fee estimate is REQUIRED to send. If we can't estimate, the
+            # send would just fail (mass-calc error / partial compound / stale
+            # balance), so block it here with a clear reason instead of letting
+            # the user broadcast a doomed transaction.
             est = None
             try:
                 if res and getattr(res, "ok", False):
                     est = KeryxCliDriver.parse_estimate_result(res.output)
-                elif res:
-                    blob = ((getattr(res, "error", "") or "") + " "
-                            + (getattr(res, "output", "") or "")).lower()
-                    if "insufficient" in blob:
-                        # The amount + network fee exceeds the balance — tell the
-                        # user about the fee explicitly (the bare amount may look
-                        # affordable, e.g. sending all 20 of a 20 KRX balance).
-                        dialogs._warn(self, _t("insufficient_funds"),
-                                      _t("insufficient_amount_fee"))
-                        self.status("")
-                        return
             except Exception:
                 est = None
-            show_dialog(est)
+            if est:
+                show_dialog(est)
+                return
+            self.status("")
+            blob = ""
+            if res:
+                blob = ((getattr(res, "error", "") or "") + " "
+                        + (getattr(res, "output", "") or "")).lower()
+            if "insufficient" in blob:
+                dialogs._warn(self, _t("insufficient_funds"),
+                              _t("insufficient_amount_fee"))
+            elif "mass" in blob:
+                # Tx can't be built for this amount (dust change, or too many
+                # tiny UTXOs needing consolidation first).
+                dialogs._warn(self, _t("cannot_send"), _t("estimate_failed_blocked"))
+            else:
+                dialogs._warn(self, _t("cannot_send"), _t("estimate_failed_blocked"))
 
         # Fetch a (non-broadcasting) fee estimate so the confirm dialog can show
         # the fee and amount+fee total BEFORE the user signs. If it's
@@ -1958,6 +1968,10 @@ class MainWindow(QMainWindow):
         """Fill the amount with the precise maximum = balance − real network fee.
         The fee is dynamic (depends on how many UTXOs are spent), so we estimate
         it for a near-full send and subtract it."""
+        # Guard: a queued recalc can fire after the user left the dashboard (e.g.
+        # Switch Wallet). Bail silently so no phantom prompt pops on other screens.
+        if not self._wallet_open or self.stack.currentWidget() is not self.dash_screen:
+            return
         bal = getattr(self, "_balance_krx", None)
         if not isinstance(bal, (int, float)) or bal <= 0:
             dialogs._warn(self, _t("insufficient_funds"), "")
@@ -1985,6 +1999,10 @@ class MainWindow(QMainWindow):
             self.status("")
 
         def done(res):
+            # Stale result: the user may have left the dashboard before the
+            # estimate returned — don't pop a prompt on another screen.
+            if not self._wallet_open or self.stack.currentWidget() is not self.dash_screen:
+                return
             est = (KeryxCliDriver.parse_estimate_result(getattr(res, "output", "") or "")
                    if getattr(res, "ok", False) else None)
             if not est:
@@ -2031,6 +2049,8 @@ class MainWindow(QMainWindow):
     def _switch_wallet(self):
         """Close the open wallet and return to the Wallet Options screen."""
         self._balance_timer.stop()
+        self._max_mode = False
+        self._max_recalc.stop()   # cancel any pending Max recalc (no phantom prompt)
         self._wallet_open = False
         self._wallet_name = ""
         self._current_address = ""

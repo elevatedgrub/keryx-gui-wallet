@@ -207,7 +207,12 @@ class KeryxCliDriver:
                     timeout=DEFAULT_TIMEOUT,
                     echo=False,
                     codec_errors="replace",
-                    dimensions=(24, 80),          # give the editor a window size
+                    # WIDE terminal so the CLI never wraps long output lines at
+                    # the column boundary. At 80 cols a big-balance "Send -/
+                    # Estimate -" line (or a 12-word mnemonic echo) wrapped
+                    # mid-number, breaking the result regex → "estimate
+                    # unavailable" / "send result uncertain" on large wallets.
+                    dimensions=(50, 1000),
                     env=env,
                 )
                 self._child.delaybeforesend = 0.2  # let the editor settle
