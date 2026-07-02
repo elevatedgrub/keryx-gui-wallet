@@ -1080,6 +1080,10 @@ class MainWindow(QMainWindow):
             run("")
 
     def _do_new_account(self):
+        """Create one or several bip32 accounts. Asks HOW MANY first: 1 (default)
+        runs the single-account flow (named exactly as entered); >1 asks for a
+        base name and creates <base>1…<base>N. One password prompt either way;
+        the payment-secret retry makes it work on passphrase wallets too."""
         if not self._wallet_open:
             return
         # Show the recovery caveat FIRST (red) — additional bip32 accounts don't
@@ -1087,52 +1091,74 @@ class MainWindow(QMainWindow):
         if not dialogs.confirm(self, _t("new_account"),
                                _t("account_recovery_warning"), danger=True):
             return
-        name, ok = dialogs.get_text(self, _t("new_account"),
-                                    _t("account_name_prompt"))
-        if not ok:   # cancelled; an empty name is allowed (unnamed account)
+        cnt_str, ok = dialogs.get_text(self, _t("new_account"),
+                                       _t("account_count_prompt"), initial="1")
+        if not ok:
             return
+        try:
+            count = int((cnt_str or "").strip())
+        except ValueError:
+            count = 0
+        if count < 1 or count > 50:
+            dialogs._warn(self, _t("new_account"), _t("invalid_count"))
+            return
+        # 1 → exact name (empty = unnamed); many → base name (numbered 1…N).
+        prompt = _t("account_name_prompt") if count == 1 \
+            else _t("account_basename_prompt")
+        name, ok = dialogs.get_text(self, _t("new_account"), prompt)
+        if not ok:   # cancelled; an empty name is allowed
+            return
+        name = (name or "").strip()
         pw, ok = dialogs.get_password(self, "", _t("enter_password"))
         if not ok:
             return
 
         # Remember which accounts existed BEFORE the create so we can identify the
-        # new one by diff — robust even if the "account created" line won't parse.
+        # new one(s) by diff — robust even if the "account created" line won't parse.
         prev_ids = {a["id"] for a in self._accounts}
 
         def done(res: CliResult):
-            if res.ok:
-                parsed = KeryxCliDriver.parse_created_account(res.output)
-                self.status(_t("account_created"))
-
-                def after_refresh(r2: CliResult):
-                    new_id = parsed.get("id") if parsed else None
-                    if r2.ok and r2.output:
-                        self._last_list_output = r2.output
-                        accts = self._parse_accounts(r2.output)
-                        # The CLI auto-selects the newly created account; find the
-                        # id that wasn't there before and select it (fall back to
-                        # the parsed id only if the diff is inconclusive).
-                        added = [a["id"] for a in accts if a["id"] not in prev_ids]
-                        if added:
-                            new_id = added[0]
-                        if new_id:
-                            self._selected_account_id = new_id
-                        self._update_balance_display(r2.output)
-                        self._show_address()   # now matches the selected account
-                    detail = f"[{new_id}]" if new_id else ""
-                    dialogs.message(self, _t("account_created"), detail, "info")
-
-                self._submit(self.driver.run, after_refresh, "list")
-                self._refresh_price()
-            else:
-                dialogs._warn(self, _t("create_account_failed"),
-                              res.error or _t("create_account_failed"))
-                self.status(_t("create_account_failed"))
+            # Refresh the list regardless of ok — a partial bulk run still created
+            # some accounts, which we count/select by diffing against prev_ids.
+            def after_refresh(r2: CliResult):
+                new_id = None
+                created_n = 0
+                if r2.ok and r2.output:
+                    self._last_list_output = r2.output
+                    accts = self._parse_accounts(r2.output)
+                    added = [a["id"] for a in accts if a["id"] not in prev_ids]
+                    created_n = len(added)
+                    if added:
+                        new_id = added[-1]   # select the last created
+                        self._selected_account_id = new_id
+                    self._update_balance_display(r2.output)
+                    self._show_address()   # now matches the selected account
+                if res.ok:
+                    self.status(_t("account_created"))
+                    if count == 1:
+                        detail = f"[{new_id}]" if new_id else ""
+                        dialogs.message(self, _t("account_created"), detail, "info")
+                    else:
+                        dialogs.message(self, _t("new_account"),
+                                        _t("accounts_created", n=created_n), "info")
+                else:
+                    self.status(_t("create_account_failed"))
+                    dialogs._warn(self, _t("create_account_failed"),
+                                  res.error or _t("create_account_failed"))
+            self._submit(self.driver.run, after_refresh, "list")
+            self._refresh_price()
 
         self.status(_t("new_account") + "…")
-        # create_account signature: (name, password, acct_type, payment_secret).
-        self._run_payment_op(self.driver.create_account, (name, pw, "bip32"),
-                             done, on_cancel=lambda: self.status(""))
+        if count == 1:
+            # create_account signature: (name, password, acct_type, payment_secret).
+            self._run_payment_op(self.driver.create_account, (name, pw, "bip32"),
+                                 done, on_cancel=lambda: self.status(""))
+        else:
+            # create_accounts signature: (count, base_name, password, acct_type,
+            # payment_secret).
+            self._run_payment_op(self.driver.create_accounts,
+                                 (count, name, pw, "bip32"), done,
+                                 on_cancel=lambda: self.status(""))
 
     def _do_rename_account(self):
         idx = self._selected_account_index

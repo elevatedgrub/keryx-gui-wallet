@@ -882,6 +882,45 @@ class KeryxCliDriver:
                              error="Account creation could not be confirmed. "
                                    "Check the account list.")
 
+    def create_accounts(self, count: int, base_name: str, password: str,
+                        acct_type: str = "bip32", payment_secret: str = "",
+                        timeout: int = DEFAULT_TIMEOUT) -> CliResult:
+        """
+        Create `count` accounts back-to-back by calling create_account in a loop.
+        Each is named "<base_name><n>" (1-based) when base_name is given, else
+        unnamed. Does NOT hold self._lock (each create_account serializes itself).
+
+        Returns a CliResult whose .output is the newline-joined ids of the
+        accounts created. On the FIRST account's failure nothing has been created,
+        so the raw failing result is returned as-is — this lets the GUI's
+        payment-secret retry (a passphrase wallet asks on the first create) rerun
+        the whole batch cleanly. A later (partial) failure is reported with a
+        progress summary so the user knows how many succeeded.
+        """
+        try:
+            count = int(count)
+        except (TypeError, ValueError):
+            count = 0
+        if count < 1:
+            return CliResult("account create", "", ok=False,
+                             error="Number of accounts must be a positive integer.")
+        base_name = (base_name or "").strip()
+        created = []
+        for i in range(1, count + 1):
+            name = f"{base_name}{i}" if base_name else ""
+            res = self.create_account(name, password, acct_type,
+                                      payment_secret, timeout=timeout)
+            if not res.ok:
+                if not created:
+                    return res  # unwrapped: lets the GUI detect/prompt passphrase
+                return CliResult("account create", "\n".join(created), ok=False,
+                                 error=f"Created {len(created)} of {count}; "
+                                       f"#{i} failed: {res.error or 'unknown error'}")
+            parsed = self.parse_created_account(res.output)
+            if parsed and parsed.get("id"):
+                created.append(parsed["id"])
+        return CliResult("account create", "\n".join(created), ok=True)
+
     @staticmethod
     def parse_created_account(output: str):
         """Pull {'name','id'} from a successful create. dict or None."""

@@ -2,6 +2,15 @@
 import os
 import sys
 import argparse
+
+# Default the Qt platform to xcb (X11/XWayland) BEFORE importing PyQt6. On a
+# Wayland session (Ubuntu GNOME's default) Qt otherwise loads the Wayland plugin
+# and draws its own generic client-side decorations — a white title bar with no
+# minimize/maximize/close buttons. Routing through xcb gives the normal themed
+# window frame. setdefault keeps it overridable (e.g. QT_QPA_PLATFORM=wayland).
+# This mirrors rthook_xcb.py, which only applies to the PyInstaller bundle.
+os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
 from keryx_wallet.ui.main_window import MainWindow
